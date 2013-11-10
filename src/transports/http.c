@@ -21,6 +21,7 @@ static const char *receive_pack_service_url = "/git-receive-pack";
 static const char *get_verb = "GET";
 static const char *post_verb = "POST";
 static const char *basic_authtype = "Basic";
+static const char *negotiate_authtype = "NTLM";
 
 #define OWNING_SUBTRANSPORT(s) ((http_subtransport *)(s)->parent.subtransport)
 
@@ -37,6 +38,7 @@ enum last_cb {
 
 typedef enum {
 	GIT_HTTP_AUTH_BASIC = 1,
+	GIT_HTTP_AUTH_NEGOTIATE = 2,
 } http_authmechanism_t;
 
 typedef struct {
@@ -61,6 +63,7 @@ typedef struct {
 	git_cred *cred;
 	git_cred *url_cred;
 	http_authmechanism_t auth_mechanism;
+	char *auth_challenge;
 	bool connected;
 
 	/* Parser structures */
@@ -88,7 +91,10 @@ typedef struct {
 	size_t *bytes_read;
 } parser_context;
 
-static int apply_basic_credential(git_buf *buf, git_cred *cred)
+static int apply_basic_credentials(
+	git_buf *buf,
+	git_cred *cred,
+	const char *challenge)
 {
 	git_cred_userpass_plaintext *c = (git_cred_userpass_plaintext *)cred;
 	git_buf raw = GIT_BUF_INIT;
@@ -110,6 +116,15 @@ on_error:
 
 	git_buf_free(&raw);
 	return error;
+}
+
+static int apply_negotiate_credentials(
+	git_buf *buf,
+	git_cred *cred,
+	const char *challenge)
+{
+	printf("challenge: %s\n", challenge);
+	return -1;
 }
 
 static int gen_request(
@@ -137,17 +152,22 @@ static int gen_request(
 		git_buf_puts(buf, "Accept: */*\r\n");
 
 	/* Apply credentials to the request */
-	if (t->cred && t->cred->credtype == GIT_CREDTYPE_USERPASS_PLAINTEXT &&
-		t->auth_mechanism == GIT_HTTP_AUTH_BASIC &&
-		apply_basic_credential(buf, t->cred) < 0)
-		return -1;
-
+	if (t->cred && t->cred->credtype == GIT_CREDTYPE_KERBEROS &&
+		(t->auth_mechanism & GIT_HTTP_AUTH_NEGOTIATE)) {
+		if (apply_negotiate_credentials(buf, t->cred, t->auth_challenge) < 0)
+			return -1;
+	} else if (t->cred && t->cred->credtype == GIT_CREDTYPE_USERPASS_PLAINTEXT &&
+		(t->auth_mechanism & GIT_HTTP_AUTH_BASIC)) {
+		if (apply_basic_credentials(buf, t->cred, t->auth_challenge) < 0)
+			return -1;
+	}
+	
 	/* Use url-parsed basic auth if username and password are both provided */
 	if (!t->cred && t->connection_data.user && t->connection_data.pass) {
 		if (!t->url_cred && git_cred_userpass_plaintext_new(&t->url_cred,
 					t->connection_data.user, t->connection_data.pass) < 0)
 			return -1;
-		if (apply_basic_credential(buf, t->url_cred) < 0) return -1;
+		if (apply_basic_credentials(buf, t->url_cred, t->auth_challenge) < 0) return -1;
 	}
 
 	git_buf_puts(buf, "\r\n");
@@ -161,16 +181,28 @@ static int gen_request(
 static int parse_unauthorized_response(
 	git_vector *www_authenticate,
 	int *allowed_types,
-	http_authmechanism_t *auth_mechanism)
+	http_authmechanism_t *auth_mechanism,
+	char **auth_challenge)
 {
 	unsigned i;
 	char *entry;
 
 	git_vector_foreach(www_authenticate, i, entry) {
+		/* TODO: fix the len */
+		if (!strncmp(entry, negotiate_authtype, 4) &&
+			(entry[4] == '\0' || entry[4] == ' ')) {
+			*allowed_types |= GIT_CREDTYPE_KERBEROS;
+			*auth_mechanism = GIT_HTTP_AUTH_NEGOTIATE;
+
+			GITERR_CHECK_ALLOC(*auth_challenge = git__strdup(entry));
+		}
+
 		if (!strncmp(entry, basic_authtype, 5) &&
 			(entry[5] == '\0' || entry[5] == ' ')) {
 			*allowed_types |= GIT_CREDTYPE_USERPASS_PLAINTEXT;
 			*auth_mechanism = GIT_HTTP_AUTH_BASIC;
+
+			GITERR_CHECK_ALLOC(*auth_challenge = git__strdup(entry));
 		}
 	}
 
@@ -261,8 +293,13 @@ static int on_headers_complete(http_parser *parser)
 		t->owner->cred_acquire_cb) {
 		int allowed_types = 0;
 
+		if (t->auth_challenge) {
+			git__free(t->auth_challenge);
+			t->auth_challenge = NULL;
+		}
+
 		if (parse_unauthorized_response(&t->www_authenticate,
-			&allowed_types, &t->auth_mechanism) < 0)
+			&allowed_types, &t->auth_mechanism, &t->auth_challenge) < 0)
 			return t->parse_error = PARSE_ERROR_GENERIC;
 
 		if (allowed_types &&

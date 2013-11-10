@@ -54,7 +54,7 @@
 /**
  * Check a pointer allocation result, returning -1 if it failed.
  */
-#define GITERR_CHECK_ALLOC(ptr) if (ptr == NULL) { return -1; }
+#define GITERR_CHECK_ALLOC(ptr) if ((ptr) == NULL) { return -1; }
 
 /**
  * Check a return value and propogate result if non-zero.

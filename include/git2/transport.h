@@ -38,6 +38,8 @@ typedef enum {
 
 	/* git_cred_ssh_custom */
 	GIT_CREDTYPE_SSH_CUSTOM =          (1u << 2),
+
+	GIT_CREDTYPE_KERBEROS = (1u << 3),
 } git_credtype_t;
 
 /* The base structure for all credential types */
@@ -48,7 +50,7 @@ struct git_cred {
 	void (*free)(git_cred *cred);
 };
 
-/* A plaintext username and password */
+/** A plaintext username and password */
 typedef struct {
 	git_cred parent;
 	char *username;
@@ -61,9 +63,7 @@ typedef LIBSSH2_USERAUTH_PUBLICKEY_SIGN_FUNC((*git_cred_sign_callback));
 typedef int (*git_cred_sign_callback)(void *, ...);
 #endif
 
-/**
- * A ssh key from disk
- */
+/** An ssh key from disk */
 typedef struct git_cred_ssh_key {
 	git_cred parent;
 	char *username;
@@ -72,9 +72,7 @@ typedef struct git_cred_ssh_key {
 	char *passphrase;
 } git_cred_ssh_key;
 
-/**
- * A key with a custom signature function
- */
+/** A key with a custom signature function */
 typedef struct git_cred_ssh_custom {
 	git_cred parent;
 	char *username;
@@ -83,6 +81,11 @@ typedef struct git_cred_ssh_custom {
 	void *sign_callback;
 	void *sign_data;
 } git_cred_ssh_custom;
+
+/** A key for for Kerberos / NTLM default user authentication */
+typedef struct git_cred_default {
+	git_cred parent;
+} git_cred_default;
 
 /**
  * Check whether a credential object contains username information.
@@ -149,6 +152,12 @@ GIT_EXTERN(int) git_cred_ssh_custom_new(
 	size_t publickey_len,
 	git_cred_sign_callback sign_fn,
 	void *sign_data);
+
+/**
+ * Create a "default" credential suitable for SPNEGO mechanisms like
+ * Kerberos or NTLM
+ */
+GIT_EXTERN(int) git_cred_default_new(git_cred **out);
 
 /**
  * Signature of a function which acquires a credential object.

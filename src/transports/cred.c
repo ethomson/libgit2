@@ -191,3 +191,27 @@ int git_cred_ssh_custom_new(
 	*cred = &c->parent;
 	return 0;
 }
+
+static void default_free(struct git_cred *cred)
+{
+	git_cred_default *c = (git_cred_default *)cred;
+
+	git__free(c);
+}
+
+int git_cred_default_new(
+	git_cred **cred)
+{
+	git_cred_default *c;
+
+	assert(cred);
+
+	c = git__calloc(1, sizeof(git_cred_default));
+	GITERR_CHECK_ALLOC(c);
+
+	c->parent.credtype = GIT_CREDTYPE_KERBEROS;
+	c->parent.free = default_free;
+
+	*cred = &c->parent;
+	return 0;
+}
