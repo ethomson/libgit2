@@ -29,6 +29,10 @@ int git_cred_has_username(git_cred *cred)
 		ret = !!c->username;
 		break;
 	}
+	case GIT_CREDTYPE_DEFAULT: {
+		ret = 0;
+		break;
+	}
 	}
 
 	return ret;
@@ -196,22 +200,26 @@ static void default_free(struct git_cred *cred)
 {
 	git_cred_default *c = (git_cred_default *)cred;
 
+	git__free(c->target);
 	git__free(c);
 }
 
-int git_cred_default_new(
-	git_cred **cred)
+int git_cred_default_new(git_cred **cred, const char *target)
 {
 	git_cred_default *c;
 
-	assert(cred);
+	assert(cred && target);
 
 	c = git__calloc(1, sizeof(git_cred_default));
 	GITERR_CHECK_ALLOC(c);
 
-	c->parent.credtype = GIT_CREDTYPE_KERBEROS;
+	c->parent.credtype = GIT_CREDTYPE_DEFAULT;
 	c->parent.free = default_free;
+
+	c->target = git__strdup(target);
+	GITERR_CHECK_ALLOC(c->target);
 
 	*cred = &c->parent;
 	return 0;
 }
+

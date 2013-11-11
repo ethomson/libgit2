@@ -39,7 +39,7 @@ typedef enum {
 	/* git_cred_ssh_custom */
 	GIT_CREDTYPE_SSH_CUSTOM =          (1u << 2),
 
-	GIT_CREDTYPE_KERBEROS = (1u << 3),
+	GIT_CREDTYPE_DEFAULT = (1u << 3),
 } git_credtype_t;
 
 /* The base structure for all credential types */
@@ -85,6 +85,7 @@ typedef struct git_cred_ssh_custom {
 /** A key for for Kerberos / NTLM default user authentication */
 typedef struct git_cred_default {
 	git_cred parent;
+	char *target;
 } git_cred_default;
 
 /**
@@ -156,8 +157,10 @@ GIT_EXTERN(int) git_cred_ssh_custom_new(
 /**
  * Create a "default" credential suitable for SPNEGO mechanisms like
  * Kerberos or NTLM
+ *
+ * @param target The authentication target principal
  */
-GIT_EXTERN(int) git_cred_default_new(git_cred **out);
+GIT_EXTERN(int) git_cred_default_new(git_cred **out, const char *target);
 
 /**
  * Signature of a function which acquires a credential object.

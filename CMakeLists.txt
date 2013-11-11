@@ -33,6 +33,7 @@ OPTION( ANDROID				"Build for android NDK"	 				OFF )
 
 OPTION( USE_ICONV			"Link with and use iconv library" 		OFF )
 OPTION( USE_SSH				"Link with libssh to enable SSH support" ON )
+OPTION( USE_GSSAPI          "Link with GSSAPI to enable SPNEGO"     OFF )
 
 IF(APPLE)
 	SET( USE_ICONV ON )
@@ -200,6 +201,13 @@ IF (LIBSSH2_FOUND)
 	SET(SSH_LIBRARIES ${LIBSSH2_LIBRARIES})
 ENDIF()
 
+IF (USE_GSSAPI AND NOT MINGW)
+	ADD_DEFINITIONS(-DGIT_GSSAPI)
+	SET(LIBGIT2_PC_REQUIRES "${LIBGIT2_PC_REQUIRES} libgssapi")
+	SET(GSSAPI_LIBRARIES /usr/lib/x86_64-linux-gnu/libgssapi.so.3 /usr/lib/x86_64-linux-gnu/libgssapi_krb5.so /usr/lib/x86_64-linux-gnu/libkrb5.so /usr/lib/x86_64-linux-gnu/libcom_err.so)
+ENDIF()
+
+
 
 # Platform specific compilation flags
 IF (MSVC)
@@ -353,6 +361,7 @@ ENDIF()
 ADD_LIBRARY(git2 ${SRC_H} ${SRC_GIT2} ${SRC_OS} ${SRC_ZLIB} ${SRC_HTTP} ${SRC_REGEX} ${SRC_SHA1} ${WIN_RC})
 TARGET_LINK_LIBRARIES(git2 ${SSL_LIBRARIES})
 TARGET_LINK_LIBRARIES(git2 ${SSH_LIBRARIES})
+TARGET_LINK_LIBRARIES(git2 ${GSSAPI_LIBRARIES})
 TARGET_OS_LIBRARIES(git2)
 
 # Workaround for Cmake bug #0011240 (see http://public.kitware.com/Bug/view.php?id=11240)
@@ -418,6 +427,7 @@ IF (BUILD_CLAR)
 
 	TARGET_LINK_LIBRARIES(libgit2_clar ${SSL_LIBRARIES})
 	TARGET_LINK_LIBRARIES(libgit2_clar ${SSH_LIBRARIES})
+	TARGET_LINK_LIBRARIES(libgit2_clar ${GSSAPI_LIBRARIES})
 	TARGET_OS_LIBRARIES(libgit2_clar)
 	MSVC_SPLIT_SOURCES(libgit2_clar)
 

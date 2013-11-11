@@ -17,6 +17,8 @@ static char *_remote_url;
 static char *_remote_user;
 static char *_remote_pass;
 
+static char *_remote_principal;
+
 static int cred_acquire_cb(git_cred **,	const char *, const char *, unsigned int, void *);
 
 static git_remote *_remote;
@@ -47,8 +49,13 @@ static int cred_acquire_cb(
 	GIT_UNUSED(user_from_url);
 	GIT_UNUSED(payload);
 
-	if (GIT_CREDTYPE_KERBEROS & allowed_types) {
-		return git_cred_default_new(cred);
+	if (GIT_CREDTYPE_DEFAULT & allowed_types) {
+		if (!_remote_principal) {
+			printf("GITTEST_REMOTE_PRINCIPAL must be set\n");
+			return -1;
+		}
+
+		return git_cred_default_new(cred, _remote_principal);
 	}
 
 	if (GIT_CREDTYPE_SSH_KEY & allowed_types) {
@@ -303,6 +310,7 @@ void test_online_push__initialize(void)
 	_remote_ssh_key = cl_getenv("GITTEST_REMOTE_SSH_KEY");
 	_remote_ssh_pubkey = cl_getenv("GITTEST_REMOTE_SSH_PUBKEY");
 	_remote_ssh_passphrase = cl_getenv("GITTEST_REMOTE_SSH_PASSPHRASE");
+	_remote_principal = cl_getenv("GITTEST_REMOTE_PRINCIPAL");
 	_remote = NULL;
 
 	if (_remote_url) {
