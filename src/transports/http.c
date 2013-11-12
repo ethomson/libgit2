@@ -90,6 +90,7 @@ typedef struct {
 		negotiate_complete : 1;
 	gss_ctx_id_t negotiate_context;
 	gss_OID negotiate_oid;
+	gss_name_t negotiate_principal;
 #endif
 } http_subtransport;
 
@@ -170,40 +171,50 @@ static void negotiate_err_set(
 		status_major, status_minor);
 }
 
-static int negotiate_configure(http_subtransport *transport)
-{
-	return 0;
-}
-
-static int negotiate_next_token(
-	git_buf *buf,
-	http_subtransport *transport,
-	git_cred *cred)
+static int negotiate_configure(http_subtransport *transport, git_cred *cred)
 {
 	OM_uint32 status_major, status_minor;
-	gss_buffer_desc target_buffer = GSS_C_EMPTY_BUFFER,
-		input_token = GSS_C_EMPTY_BUFFER,
-		output_token = GSS_C_EMPTY_BUFFER;
-	gss_buffer_t input_token_ptr = GSS_C_NO_BUFFER;
-	gss_name_t server;
+	git_buf principal = GIT_BUF_INIT;
+	gss_buffer_desc target_buffer = GSS_C_EMPTY_BUFFER;
+	git_cred_default *c = (git_cred_default *)cred;
 	int error = 0;
 
-	assert(transport->auth_challenge);
+	assert(transport);
 
-	git_cred_default *c = (git_cred_default *)cred;
+	if (c->target) {
+		target_buffer.value = (void *)c->target;
+		target_buffer.length = strlen(c->target);
+	} else {
+		if (git_buf_printf(&principal,
+			"HTTP@%s", transport->connection_data.host) < 0)
+			goto done;
 
-	target_buffer.value = (void *)c->target;
-	target_buffer.length = strlen(c->target);
+		target_buffer.value = (void *)git_buf_cstr(&principal);
+		target_buffer.length = git_buf_len(&principal)-1;
+	}
 
-	status_major = gss_import_name(&status_minor, &target_buffer,
-		GSS_C_NT_HOSTBASED_SERVICE, &server);
-
-	if (GSS_ERROR(status_major)) {
+	if (GSS_ERROR(status_major = gss_import_name(&status_minor, &target_buffer,
+		GSS_C_NT_HOSTBASED_SERVICE, &transport->negotiate_principal))) {
 		negotiate_err_set(status_major, status_minor,
 			"could not parse principal");
 		error = -1;
 		goto done;
 	}
+
+done:
+	git_buf_free(&principal);
+	return error;
+}
+
+static int negotiate_next_token(git_buf *buf, http_subtransport *transport)
+{
+	OM_uint32 status_major, status_minor;
+	gss_buffer_desc input_token = GSS_C_EMPTY_BUFFER,
+		output_token = GSS_C_EMPTY_BUFFER;
+	gss_buffer_t input_token_ptr = GSS_C_NO_BUFFER;
+	int error = 0;
+
+	assert(transport->auth_challenge);
 
 	/* Either we are starting authentication and do not have a context,
 	 * or this is a subsequent call and we should have both.
@@ -224,7 +235,7 @@ static int negotiate_next_token(
 		&status_minor,
 		GSS_C_NO_CREDENTIAL,
 		&transport->negotiate_context,
-		server,
+		transport->negotiate_principal,
 		GSS_C_NO_OID,
 		GSS_C_MUTUAL_FLAG | GSS_C_REPLAY_FLAG,
 		0,
@@ -255,7 +266,6 @@ static int negotiate_next_token(
 		transport->negotiate_complete = 1;
 
 done:
-	gss_release_name(&status_minor, &server);	
 	gss_release_buffer(&status_minor, (gss_buffer_t) &output_token);
 
 	return error;
@@ -269,12 +279,12 @@ static int apply_negotiate_credentials(
 	int error = 0;
 
 	if (!transport->negotiate_configured &&
-		(error = negotiate_configure(transport)) < 0)
+		(error = negotiate_configure(transport, cred)) < 0)
 		goto done;
 
 	printf("challenge: %s\n", transport->auth_challenge);
 
-	error = negotiate_next_token(buf, transport, cred);
+	error = negotiate_next_token(buf, transport);
 
 done:
 	return error;
@@ -643,9 +653,14 @@ static int http_connect(http_subtransport *t)
 {
 	int flags = 0;
 
-	if (t->connected &&
-		http_should_keep_alive(&t->parser) &&
-		http_body_is_final(&t->parser))
+	printf("http_connect : %d / %d / %d\n",
+		t->connected,
+		http_should_keep_alive(&t->parser),
+		http_body_is_final(&t->parser));
+
+	if (t->connected /*&&
+		http_should_keep_alive(&t->parser) /*&&
+		http_body_is_final(&t->parser)*/)
 		return 0;
 
 	if (t->socket.socket)
@@ -1057,9 +1072,18 @@ static int http_close(git_smart_subtransport *subtransport)
 
 static void http_free(git_smart_subtransport *subtransport)
 {
+#ifdef GIT_GSSAPI
+	OM_uint32 status_minor;
+#endif
+
 	http_subtransport *t = (http_subtransport *) subtransport;
 
 	http_close(subtransport);
+
+#ifdef GIT_GSSAPI
+	if (t->negotiate_principal != GSS_C_NO_NAME)
+		gss_release_name(&status_minor, &t->negotiate_principal);	
+#endif
 
 	git__free(t);
 }
@@ -1087,6 +1111,7 @@ int git_smart_subtransport_http(git_smart_subtransport **out, git_transport *own
 
 #ifdef GIT_GSSAPI
 	t->negotiate_context = GSS_C_NO_CONTEXT;
+	t->negotiate_principal = GSS_C_NO_NAME;
 #endif
 
 	*out = (git_smart_subtransport *) t;

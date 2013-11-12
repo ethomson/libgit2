@@ -204,11 +204,12 @@ static void default_free(struct git_cred *cred)
 	git__free(c);
 }
 
+/* TODO: do we ever need to accept a target? */
 int git_cred_default_new(git_cred **cred, const char *target)
 {
 	git_cred_default *c;
 
-	assert(cred && target);
+	assert(cred);
 
 	c = git__calloc(1, sizeof(git_cred_default));
 	GITERR_CHECK_ALLOC(c);
@@ -216,8 +217,10 @@ int git_cred_default_new(git_cred **cred, const char *target)
 	c->parent.credtype = GIT_CREDTYPE_DEFAULT;
 	c->parent.free = default_free;
 
-	c->target = git__strdup(target);
-	GITERR_CHECK_ALLOC(c->target);
+	if (target) {
+		c->target = git__strdup(target);
+		GITERR_CHECK_ALLOC(c->target);
+	}
 
 	*cred = &c->parent;
 	return 0;

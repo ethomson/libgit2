@@ -550,6 +550,7 @@ int gitno_send(gitno_socket *socket, const char *msg, size_t len, int flags)
 
 int gitno_close(gitno_socket *s)
 {
+	printf("what up!\n");
 #ifdef GIT_SSL
 	if (s->ssl.ctx &&
 		gitno_ssl_teardown(&s->ssl) < 0)

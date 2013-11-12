@@ -50,11 +50,6 @@ static int cred_acquire_cb(
 	GIT_UNUSED(payload);
 
 	if (GIT_CREDTYPE_DEFAULT & allowed_types) {
-		if (!_remote_principal) {
-			printf("GITTEST_REMOTE_PRINCIPAL must be set\n");
-			return -1;
-		}
-
 		return git_cred_default_new(cred, _remote_principal);
 	}
 
