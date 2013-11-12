@@ -28,16 +28,6 @@ static const char *post_verb = "POST";
 static const char *basic_authtype = "Basic";
 static const char *negotiate_authtype = "Negotiate";
 
-#ifdef GIT_GSSAPI
-static gss_OID_desc negotiate_oid_spnego =
-	{ 6, (void *) "\x2b\x06\x01\x05\x05\x02" };
-static gss_OID_desc negotiate_oid_krb5 =
-	{ 9, (void *) "\x2a\x86\x48\x86\xf7\x12\x01\x02\x02" };
-
-static gss_OID negotiate_oids[] =
-	{ &negotiate_oid_spnego, &negotiate_oid_krb5, NULL };
-#endif
-
 #define OWNING_SUBTRANSPORT(s) ((http_subtransport *)(s)->parent.subtransport)
 
 #define PARSE_ERROR_GENERIC	-1
@@ -147,62 +137,41 @@ on_error:
 static void negotiate_err_set(
 	OM_uint32 status_major,
 	OM_uint32 status_minor,
-	const char *message)
+	const char *msg)
 {
+	git_buf gssmsg = GIT_BUF_INIT;
 	gss_buffer_desc buffer = GSS_C_EMPTY_BUFFER;
-	OM_uint32 status_display, context = 0;
+	OM_uint32 status_error, status_display, message_context = 0;
+	int status_type;
 
-	if (gss_display_status(&status_display, status_major, GSS_C_GSS_CODE,
-		GSS_C_NO_OID, &context, &buffer) == GSS_S_COMPLETE) {
-		giterr_set(GITERR_NET, "%s: %.*s (%d.%d)", message,
-			(int)buffer.length, (char *)buffer.value,
-			status_major, status_minor);
-		gss_release_buffer(&status_minor, &buffer);
+	if (status_minor) {
+		status_error = status_minor;
+		status_type = GSS_C_MECH_CODE;
 	} else {
-		giterr_set(GITERR_NET, "%s: unknown negotiate error (%d.%d)",
-			message, status_major, status_minor);
+		status_error = status_major;
+		status_type = GSS_C_GSS_CODE;
 	}
 
-	/* TODO */
-	const git_error *err = giterr_last();
-	printf("%s\n", err->message);
+	/* gss_display_status is called in a loop to consume all messages */
+	do {
+		if (GSS_ERROR(gss_display_status(&status_display, status_error,
+			status_type, GSS_C_NO_OID, &message_context, &buffer))) {
+			if (!gssmsg.size)
+				git_buf_printf(&gssmsg, ": unknown negotiate error (%d.%d)",
+					status_major, status_minor);
+			break;
+		}
+
+		git_buf_printf(&gssmsg, ": %.*s",
+			(int)buffer.length, (char *)buffer.value);
+	} while (message_context);
+
+	giterr_set(GITERR_NET, "%s%s (%d.%d)", msg, git_buf_cstr(&gssmsg),
+		status_major, status_minor);
 }
 
 static int negotiate_configure(http_subtransport *transport)
 {
-	OM_uint32 status_major, status_minor;
-	gss_OID item, *oid;
-	gss_OID_set mechanism_list;
-	size_t i;
-
-	/* Query supported mechanisms looking for SPNEGO */
-	if (GSS_ERROR(status_major =
-		gss_indicate_mechs(&status_minor, &mechanism_list))) {
-		negotiate_err_set(
-			status_major, status_minor, "could not query mechanisms");
-		return -1;
-	}
-
-	if (mechanism_list) {
-		for (oid = negotiate_oids; *oid; ++oid) {
-			for (i = 0; i < mechanism_list->count; ++i) {
-				item = &mechanism_list->elements[i];
-
-				if (item->length == (*oid)->length &&
-					memcmp(item->elements, (*oid)->elements, item->length) == 0)
-					transport->negotiate_oid = *oid;
-			}
-		}
-	}
-
-	gss_release_oid_set(&status_minor, &mechanism_list);
-
-	if (!transport->negotiate_oid) {
-		giterr_set(GITERR_NET, "negotiate authentication is not supported");
-		return -1;
-	}
-
-	transport->negotiate_configured = 1;
 	return 0;
 }
 
@@ -218,6 +187,8 @@ static int negotiate_next_token(
 	gss_buffer_t input_token_ptr = GSS_C_NO_BUFFER;
 	gss_name_t server;
 	int error = 0;
+
+	assert(transport->auth_challenge);
 
 	git_cred_default *c = (git_cred_default *)cred;
 
@@ -235,29 +206,28 @@ static int negotiate_next_token(
 	}
 
 	/* Either we are starting authentication and do not have a context,
-	 * or a previous token, or we have both.
+	 * or this is a subsequent call and we should have both.
 	 */
-	if (transport->auth_challenge != NULL) {
+	if (strcmp(transport->auth_challenge, "Negotiate") == 0) {
+		if (transport->negotiate_context != GSS_C_NO_CONTEXT) {
+			giterr_set(GITERR_NET, "could not restart authentication");
+			error = -1;
+			goto done;
+		}
+	} else if (strncmp(transport->auth_challenge, "Negotiate ", 10) == 0) {
 		input_token.value = (void *)transport->auth_challenge;
 		input_token.length = strlen(transport->auth_challenge) + 1;
 		input_token_ptr = &input_token;
-	} else if (transport->negotiate_context != GSS_C_NO_CONTEXT) {
-		giterr_set(GITERR_NET, "could not restart authentication");
-		error = -1;
-		goto done;
 	}
-
-	gss_ctx_id_t context = GSS_C_NO_CONTEXT;
-	gss_OID mech = &negotiate_oid_spnego;
 
 	if (GSS_ERROR(status_major = gss_init_sec_context(
 		&status_minor,
 		GSS_C_NO_CREDENTIAL,
-		&context,
+		&transport->negotiate_context,
 		server,
-		mech,
-		GSS_C_DELEG_FLAG | GSS_C_MUTUAL_FLAG,
-		GSS_C_INDEFINITE,
+		GSS_C_NO_OID,
+		GSS_C_MUTUAL_FLAG | GSS_C_REPLAY_FLAG,
+		0,
 		GSS_C_NO_CHANNEL_BINDINGS,
 		input_token_ptr,
 		NULL,
@@ -269,7 +239,10 @@ static int negotiate_next_token(
 		goto done;
 	}
 
-	printf("return: %d\n", status_major);
+	/* TODO */
+	git_buf foo = GIT_BUF_INIT;
+	git_buf_put_base64(&foo, output_token.value, output_token.length);
+	printf("%d.%d: %s\n", status_major, status_minor, git_buf_cstr(&foo));
 
 	if (git_buf_puts(buf, "Authorization: Negotiate ") < 0 ||
 		git_buf_put_base64(buf, output_token.value, output_token.length) < 0 ||
@@ -277,8 +250,6 @@ static int negotiate_next_token(
 		error = -1;
 		goto done;
 	}
-
-	printf("%s\n", buf->ptr);
 
 	if (status_major == GSS_S_COMPLETE)
 		transport->negotiate_complete = 1;
@@ -299,11 +270,14 @@ static int apply_negotiate_credentials(
 
 	if (!transport->negotiate_configured &&
 		(error = negotiate_configure(transport)) < 0)
-		return error;
+		goto done;
 
 	printf("challenge: %s\n", transport->auth_challenge);
 
-	return negotiate_next_token(buf, transport, cred);
+	error = negotiate_next_token(buf, transport, cred);
+
+done:
+	return error;
 }
 
 #endif
@@ -353,7 +327,9 @@ static int gen_request(
 		if (!t->url_cred && git_cred_userpass_plaintext_new(&t->url_cred,
 					t->connection_data.user, t->connection_data.pass) < 0)
 			return -1;
-		if (apply_basic_credentials(buf, t, t->url_cred) < 0) return -1;
+
+		if (apply_basic_credentials(buf, t, t->url_cred) < 0)
+			return -1;
 	}
 
 	git_buf_puts(buf, "\r\n");
@@ -715,10 +691,8 @@ replay:
 
 		clear_parser_state(t);
 
-		if (gen_request(&request, s, 0) < 0) {
-			giterr_set(GITERR_NET, "Failed to generate request");
+		if (gen_request(&request, s, 0) < 0)
 			return -1;
-		}
 
 		if (gitno_send(&t->socket, request.ptr, request.size, 0) < 0) {
 			git_buf_free(&request);
@@ -817,10 +791,8 @@ static int http_stream_write_chunked(
 
 		clear_parser_state(t);
 
-		if (gen_request(&request, s, 0) < 0) {
-			giterr_set(GITERR_NET, "Failed to generate request");
+		if (gen_request(&request, s, 0) < 0)
 			return -1;
-		}
 
 		if (gitno_send(&t->socket, request.ptr, request.size, 0) < 0) {
 			git_buf_free(&request);
@@ -892,10 +864,8 @@ static int http_stream_write_single(
 
 	clear_parser_state(t);
 
-	if (gen_request(&request, s, len) < 0) {
-		giterr_set(GITERR_NET, "Failed to generate request");
+	if (gen_request(&request, s, len) < 0)
 		return -1;
-	}
 
 	if (gitno_send(&t->socket, request.ptr, request.size, 0) < 0)
 		goto on_error;
@@ -1114,6 +1084,10 @@ int git_smart_subtransport_http(git_smart_subtransport **out, git_transport *own
 	t->settings.on_headers_complete = on_headers_complete;
 	t->settings.on_body = on_body_fill_buffer;
 	t->settings.on_message_complete = on_message_complete;
+
+#ifdef GIT_GSSAPI
+	t->negotiate_context = GSS_C_NO_CONTEXT;
+#endif
 
 	*out = (git_smart_subtransport *) t;
 	return 0;
