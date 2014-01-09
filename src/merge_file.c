@@ -158,6 +158,8 @@ int git_merge_files(
 	if (flags == GIT_MERGE_AUTOMERGE_FAVOR_THEIRS)
 		xmparam.favor = XDL_MERGE_FAVOR_THEIRS;
 
+	xmparam.level = XDL_MERGE_ZEALOUS_ALNUM;
+
 	if ((xdl_result = xdl_merge(&ancestor->mmfile, &ours->mmfile,
 		&theirs->mmfile, &xmparam, &mmbuffer)) < 0) {
 		giterr_set(GITERR_MERGE, "Failed to merge files.");
