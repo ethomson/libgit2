@@ -22,6 +22,16 @@
  */
 GIT_BEGIN_DECL
 
+typedef struct {
+	const char *ptr;
+	size_t size;
+
+	const char *path;
+	unsigned int mode;
+} git_merge_file_input;
+
+#define GIT_MERGE_FILE_INPUT_INIT	{0}
+
 /**
  * Flags for `git_merge_tree` options.  A combination of these flags can be
  * passed in via the `flags` value in the `git_merge_tree_opts`.
@@ -71,6 +81,58 @@ typedef enum {
 	GIT_MERGE_FILE_FAVOR_UNION = 3,
 } git_merge_file_favor_t;
 
+typedef enum {
+	/* Defaults */
+	GIT_MERGE_FILE_DEFAULT = 0,
+
+	/* Create standard conflicted merge files */
+	GIT_MERGE_FILE_STYLE_MERGE = (1 << 0),
+
+	/* Create diff3-style files */
+	GIT_MERGE_FILE_STYLE_DIFF3 = (1 << 1),
+
+	/* Condense non-alphanumeric regions for simplified diff file */
+	GIT_MERGE_FILE_SIMPLIFY_ALNUM = (1 << 2),
+} git_merge_file_flags_t;
+
+typedef struct {
+	unsigned int version;
+
+	const char *ancestor_label;
+	const char *our_label;
+	const char *their_label;
+
+	git_merge_file_favor_t favor;
+	git_merge_file_flags_t flags;
+} git_merge_file_options;
+
+#define GIT_MERGE_FILE_OPTIONS_VERSION 1
+#define GIT_MERGE_FILE_OPTIONS_INIT {GIT_MERGE_FILE_OPTIONS_VERSION}
+
+typedef struct {
+	/**
+	 * True if the output was automerged, false if the output contains
+	 * conflict markers.
+	 */
+	unsigned int automergeable;
+
+	/**
+	 * The path that the resultant merge file should use, or NULL if a
+	 * filename conflict would occur.
+	 */
+	char *path;
+
+	/** The mode that the resultant merge file should use.  */
+	unsigned int mode;
+
+	/** The contents of the merge. */
+	unsigned char *ptr;
+
+	/** The length of the merge contents. */
+	size_t len;
+} git_merge_file_result;
+
+#define GIT_MERGE_FILE_RESULT_INIT {0}
 
 typedef struct {
 	unsigned int version;
@@ -252,6 +314,56 @@ GIT_EXTERN(int) git_merge_head_from_id(
  */
 GIT_EXTERN(void) git_merge_head_free(
 	git_merge_head *head);
+
+/**
+ * Merge two files as they exist in the in-memory data structures, using
+ * the given common ancestor as the baseline, producing a
+ * `git_merge_file_result` that reflects the merge result.
+ *
+ * Note that this function does not reference a repository, and must be
+ * called with absolute paths.
+ *
+ * @param out The git_merge_file_result to be filled in
+ * @param ancestor_path The full path to the ancestor file
+ * @param our_path The full path to the file in "our" branch
+ * @param their_path The full path to the file in "their" branch
+ * @param opts The merge file options or NULL
+ * @return 0 on success or error code
+ */
+GIT_EXTERN(int) git_merge_file(
+	git_merge_file_result *out,
+	const git_merge_file_input *ancestor,
+	const git_merge_file_input *ours,
+	const git_merge_file_input *theirs,
+	const git_merge_file_options *opts);
+
+/**
+ * Merge two files as they exist in the index, using the given common
+ * ancestor as the baseline, producing a `git_merge_file_result` that
+ * reflects the merge result.
+ *
+ * @param out The git_merge_file_result to be filled in
+ * @param repo The repository
+ * @param ancestor The index entry for the ancestor file (stage level 1)
+ * @param our_path The index entry for our file (stage level 2)
+ * @param their_path The index entry for their file (stage level 3)
+ * @param opts The merge file options or NULL
+ * @return 0 on success or error code
+ */
+GIT_EXTERN(int) git_merge_file_from_index(
+	git_merge_file_result *out,
+	git_repository *repo,
+	const git_index_entry *ancestor,
+	const git_index_entry *ours,
+	const git_index_entry *theirs,
+	const git_merge_file_options *opts);
+
+/**
+ * Frees a `git_merge_file_result`.
+ *
+ * @param result The result to free or NULL
+ */
+GIT_EXTERN(void) git_merge_file_result_free(git_merge_file_result *result);
 
 /**
  * Merge two trees, producing a `git_index` that reflects the result of
