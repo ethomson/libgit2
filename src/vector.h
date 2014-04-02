@@ -89,6 +89,9 @@ void git_vector_remove_matching(
 	git_vector *v, int (*match)(const git_vector *v, size_t idx));
 
 int git_vector_resize_to(git_vector *v, size_t new_length);
+int git_vector_grow_at(git_vector *v, size_t idx, size_t grow_len);
+int git_vector_shrink_at(git_vector *v, size_t idx, size_t shrink_len);
+
 int git_vector_set(void **old, git_vector *v, size_t position, void *value);
 
 /** Check if vector is sorted */

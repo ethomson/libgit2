@@ -449,6 +449,10 @@ typedef enum {
 	GIT_DIFF_LINE_BINARY    = 'B' /**< For "Binary files x and y differ" */
 } git_diff_line_t;
 
+typedef enum {
+	GIT_DIFF_LINE_CONTAINS_HASH = (1 << 0),
+} git_diff_line_flags_t;
+
 /**
  * Structure describing a line (or data span) of a diff.
  */
@@ -461,6 +465,8 @@ struct git_diff_line {
 	size_t content_len;  /** Number of bytes of data */
 	git_off_t content_offset; /** Offset in the original file to the content */
 	const char *content; /** Pointer to diff text, not NUL-byte terminated */
+	unsigned int hash:24,	/** Hash of the content, excluding whitespace. */
+		flags:8;			/** git_diff_line_flags_t values */
 };
 
 /**

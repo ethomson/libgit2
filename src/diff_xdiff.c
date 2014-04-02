@@ -112,7 +112,7 @@ static int git_xdiff_cb(void *priv, mmbuffer_t *bufs, int len)
 	git_patch *patch = info->patch;
 	const git_diff_delta *delta = git_patch_get_delta(patch);
 	git_diff_output *output = &info->xo->output;
-	git_diff_line line;
+	git_diff_line line = {0};
 
 	if (len == 1) {
 		output->error = git_xdiff_parse_hunk(&info->hunk, bufs[0].ptr);
