@@ -174,3 +174,4 @@ void test_apply_fromdiff__delete(void)
 		NULL, NULL,
 		PATCH_DELETE_ORIGINAL, NULL));
 }
+

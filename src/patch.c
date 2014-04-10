@@ -14,7 +14,7 @@ typedef struct {
 
 	size_t remain;
 
-	const char *default_name;
+	const char *default_path;
 } patch_parse_ctx;
 
 
@@ -33,32 +33,42 @@ static void parse_advance_chars(patch_parse_ctx *ctx, size_t char_cnt)
 	ctx->line_len -= char_cnt;
 }
 
-static char *wsdup(const char *line, size_t len)
-{
-	while(len > 0 && isspace(line[len-1]))
-		len--;
-
-	return git__strndup(line, len);
-}
-
-static int parse_header_git_oldname(
+static int parse_header_path(
+	char **out,
 	git_patch *patch,
 	patch_parse_ctx *ctx)
 {
-	patch->ofile.file->path = wsdup(ctx->line, ctx->line_len);
-	GITERR_CHECK_ALLOC(patch->ofile.file->path);
+	git_buf path = GIT_BUF_INIT;
+	int error;
 
-	return 0;
+	if ((error = git_buf_put(&path, ctx->line, ctx->line_len)) < 0)
+		goto done;
+
+	git_buf_rtrim(&path);
+
+	if (ctx->line_len > 0 && ctx->line[0] == '"')
+		error = git_buf_unquote(&path);
+
+	if (error < 0)
+		goto done;
+
+	git_path_squash_slashes(&path);
+
+	*out = git_buf_detach(&path);
+
+done:
+	git_buf_free(&path);
+	return error;
 }
 
-static int parse_header_git_newname(
-	git_patch *patch,
-	patch_parse_ctx *ctx)
+static int parse_header_git_oldpath(git_patch *patch, patch_parse_ctx *ctx)
 {
-	patch->nfile.file->path = wsdup(ctx->line, ctx->line_len);
-	GITERR_CHECK_ALLOC(patch->nfile.file->path);
+	return parse_header_path((char **)&patch->ofile.file->path, patch, ctx);
+}
 
-	return 0;
+static int parse_header_git_newpath(git_patch *patch, patch_parse_ctx *ctx)
+{
+	return parse_header_path((char **)&patch->nfile.file->path, patch, ctx);
 }
 
 static int parse_header_mode(
@@ -79,9 +89,7 @@ static int parse_header_mode(
 	return ret;
 }
 
-static int parse_header_git_index(
-	git_patch *patch,
-	patch_parse_ctx *ctx)
+static int parse_header_git_index(git_patch *patch, patch_parse_ctx *ctx)
 {
 	const char *next;
 	int error = 0;
@@ -101,17 +109,13 @@ static int parse_header_git_index(
 	return 0;
 }
 
-static int parse_header_git_oldmode(
-	git_patch *patch,
-	patch_parse_ctx *ctx)
+static int parse_header_git_oldmode(git_patch *patch, patch_parse_ctx *ctx)
 {
 	return parse_header_mode(
 		&patch->ofile.file->mode, patch, ctx, "old mode");
 }
 
-static int parse_header_git_newmode(
-	git_patch *patch,
-	patch_parse_ctx *ctx)
+static int parse_header_git_newmode(git_patch *patch, patch_parse_ctx *ctx)
 {
 	return parse_header_mode(
 		&patch->nfile.file->mode, patch, ctx, "new mode");
@@ -143,24 +147,14 @@ static int parse_header_git_newfilemode(
 		&patch->nfile.file->mode, patch, ctx, "new file mode");
 }
 
-static int parse_header_renamefrom(
-	git_patch *patch,
-	patch_parse_ctx *ctx)
+static int parse_header_renamefrom(git_patch *patch, patch_parse_ctx *ctx)
 {
-	patch->ofile.file->path = wsdup(ctx->line, ctx->line_len);
-	GITERR_CHECK_ALLOC(patch->ofile.file->path);
-
-	return 0;
+	return parse_header_path((char **)&patch->ofile.file->path, patch, ctx);
 }
 
-static int parse_header_renameto(
-	git_patch *patch,
-	patch_parse_ctx *ctx)
+static int parse_header_renameto(git_patch *patch, patch_parse_ctx *ctx)
 {
-	patch->nfile.file->path = wsdup(ctx->line, ctx->line_len);
-	GITERR_CHECK_ALLOC(patch->nfile.file->path);
-
-	return 0;
+	return parse_header_path((char **)&patch->nfile.file->path, patch, ctx);
 }
 
 typedef struct {
@@ -170,8 +164,8 @@ typedef struct {
 
 static const header_git_op header_git_ops[] = {
 	{ "@@ -", NULL },
-	{ "--- ", parse_header_git_oldname },
-	{ "+++ ", parse_header_git_newname },
+	{ "--- ", parse_header_git_oldpath },
+	{ "+++ ", parse_header_git_newpath },
 	{ "index ", parse_header_git_index },
 	{ "old mode ", parse_header_git_oldmode },
 	{ "new mode ", parse_header_git_newmode },
@@ -190,7 +184,7 @@ static int parse_header_git(
 	size_t i;
 	int error = 0;
 
-	/* TODO: parse the diff --git line, get the default name */
+	/* TODO: parse the diff --git line, get the default path */
 
 	for (parse_advance_line(ctx); ctx->remain > 0; parse_advance_line(ctx)) {
 		if (ctx->line_len == 0 || ctx->line[ctx->line_len - 1] != '\n')
@@ -246,9 +240,9 @@ static int parse_patch_header(
 				goto done;
 
 			if (!patch->ofile.file->path && !patch->nfile.file->path) {
-				/* TODO: update old / new paths with default name */
+				/* TODO: update old / new paths with default path */
 
-				error = parse_err("git diff header lacks old / new names");
+				error = parse_err("git diff header lacks old / new paths");
 				goto done;
 			}
 

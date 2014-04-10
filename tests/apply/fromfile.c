@@ -147,7 +147,12 @@ void test_apply_fromfile__delete(void)
 	cl_git_pass(apply_patchfile(FILE_ORIGINAL, NULL, PATCH_DELETE_ORIGINAL, NULL));
 }
 
-void test_apply_fromfile__rename_exact(void)
+static void apply_rename_patchfile(
+	const char *old,
+	const char *new,
+	const char *patchfile,
+	const char *filename_expected,
+	unsigned int mode_expected)
 {
 	git_patch *patch;
 	git_buf result = GIT_BUF_INIT;
@@ -155,16 +160,12 @@ void test_apply_fromfile__rename_exact(void)
 	char *filename;
 	unsigned int mode;
 
-	cl_git_pass(git_patch_from_patchfile(&patch, PATCH_RENAME_EXACT, strlen(PATCH_RENAME_EXACT)));
-	cl_git_pass(git_apply__patch(&result, &filename, &mode, FILE_ORIGINAL, strlen(FILE_ORIGINAL), patch));
+	cl_git_pass(git_patch_from_patchfile(&patch, patchfile, strlen(patchfile)));
+	cl_git_pass(git_apply__patch(&result, &filename, &mode, old, strlen(old), patch));
 
-	/* TODO: this should be b/newfile.txt, or we should strip the prefix from
-	 * the git_patch structure.  Because in the "rename from" lines, git puts
-	 * the unprefixed filename.  Because who wants consistency?!  Hah.  :(
-	 */
-	cl_assert_equal_s(FILE_ORIGINAL, result.ptr);
-	cl_assert_equal_s("newfile.txt", filename);
-	cl_assert_equal_i(0, mode);
+	cl_assert_equal_s(new, result.ptr);
+	cl_assert_equal_s(filename_expected, filename);
+	cl_assert_equal_i(mode_expected, mode);
 
 	git__free(filename);
 	git_buf_free(&result);
@@ -172,23 +173,18 @@ void test_apply_fromfile__rename_exact(void)
 	git_patch_free(patch);
 }
 
+void test_apply_fromfile__rename_exact(void)
+{
+	apply_rename_patchfile(FILE_ORIGINAL, FILE_ORIGINAL, PATCH_RENAME_EXACT, "b/newfile.txt", 0);
+}
+
 void test_apply_fromfile__rename_similar(void)
 {
-	git_patch *patch;
-	git_buf result = GIT_BUF_INIT;
-	git_buf patchbuf = GIT_BUF_INIT;
-	char *filename;
-	unsigned int mode;
+	apply_rename_patchfile(FILE_ORIGINAL, FILE_CHANGE_MIDDLE, PATCH_RENAME_SIMILAR, "b/newfile.txt", 0100644);
+}
 
-	cl_git_pass(git_patch_from_patchfile(&patch, PATCH_RENAME_SIMILAR, strlen(PATCH_RENAME_SIMILAR)));
-	cl_git_pass(git_apply__patch(&result, &filename, &mode, FILE_ORIGINAL, strlen(FILE_ORIGINAL), patch));
-
-	cl_assert_equal_s(FILE_CHANGE_MIDDLE, result.ptr);
-	cl_assert_equal_s("b/newfile.txt", filename);
-	cl_assert_equal_i(0100644, mode);
-
-	git__free(filename);
-	git_buf_free(&result);
-	git_buf_free(&patchbuf);
-	git_patch_free(patch);
+void test_apply_fromfile__rename_similar_quotedname(void)
+{
+	apply_rename_patchfile(FILE_ORIGINAL, FILE_CHANGE_MIDDLE, PATCH_RENAME_SIMILAR_QUOTEDNAME,
+		"b/foo\"bar.txt", 0100644);
 }

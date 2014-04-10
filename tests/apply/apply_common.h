@@ -284,3 +284,27 @@
 	" and this\n" \
 	" is additional context\n" \
 	" below it!\n"
+
+#define PATCH_RENAME_EXACT_QUOTEDNAME \
+	"diff --git a/file.txt \"b/foo\\\"bar.txt\"\n" \
+	"similarity index 100%\n" \
+	"rename from file.txt\n" \
+	"rename to \"foo\\\"bar.txt\"\n"
+
+#define PATCH_RENAME_SIMILAR_QUOTEDNAME \
+	"diff --git a/file.txt \"b/foo\\\"bar.txt\"\n" \
+	"similarity index 77%\n" \
+	"rename from file.txt\n" \
+	"rename to \"foo\\\"bar.txt\"\n" \
+	"index 9432026..cd8fd12 100644\n" \
+	"--- a/file.txt\n" \
+	"+++ \"b/foo\\\"bar.txt\"\n" \
+	"@@ -3,7 +3,7 @@ this is some context!\n" \
+	" around some lines\n" \
+	" that will change\n" \
+	" yes it is!\n" \
+	"-(this line is changed)\n" \
+	"+(THIS line is changed!)\n" \
+	" and this\n" \
+	" is additional context\n" \
+	" below it!\n"
