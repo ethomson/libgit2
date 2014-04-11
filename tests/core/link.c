@@ -1,14 +1,68 @@
 #include "clar_libgit2.h"
 #include "posix.h"
 
-static void do_symlink(const char *old, const char *new)
+#ifdef GIT_WIN32
+static bool is_administrator(void)
 {
+	HANDLE proc = GetCurrentProcess();
+	HANDLE proc_token = NULL;
+	SID *admin_sid = NULL;
+	DWORD len;
+	BOOL is_admin = 0;
+
+	cl_assert(admin_sid = LocalAlloc(LMEM_FIXED, SECURITY_MAX_SID_SIZE));
+
+	cl_win32_pass(OpenProcessToken(proc, TOKEN_QUERY, &proc_token));
+	cl_win32_pass(CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, admin_sid, &len));
+	cl_win32_pass(CheckTokenMembership(NULL, admin_sid, &is_admin));
+
+	LocalFree(admin_sid);
+
+	if (proc_token)
+		CloseHandle(proc_token);
+
+	CloseHandle(proc);
+
+	return is_admin ? true : false;
+}
+#endif
+
+static void do_symlink(char *old, char *new)
+{
+#ifndef GIT_WIN32
 	cl_must_pass(symlink(old, new));
+#else
+	typedef DWORD (WINAPI *create_symlink_func)(LPTSTR, LPTSTR, DWORD);
+	HMODULE module;
+	create_symlink_func pCreateSymbolicLink;
+
+	if (!is_administrator())
+		clar__skip();
+
+	cl_assert(module = GetModuleHandle("kernel32"));
+	cl_assert(pCreateSymbolicLink = (create_symlink_func)GetProcAddress(module, "CreateSymbolicLinkA"));
+
+	cl_win32_pass(pCreateSymbolicLink(new, old, 0));
+#endif
 }
 
 static void do_hardlink(const char *old, const char *new)
 {
+#ifndef GIT_WIN32
 	cl_must_pass(link(old, new));
+#else
+	typedef DWORD (WINAPI *create_hardlink_func)(LPCTSTR, LPCTSTR, LPSECURITY_ATTRIBUTES);
+	HMODULE module;
+	create_hardlink_func pCreateHardLink;
+
+	if (!is_administrator())
+		clar__skip();
+
+	cl_assert(module = GetModuleHandle("kernel32"));
+	cl_assert(pCreateHardLink = (create_hardlink_func)GetProcAddress(module, "CreateHardLinkA"));
+
+	cl_win32_pass(pCreateHardLink(new, old, 0));
+#endif
 }
 
 void test_core_link__stat_symlink(void)
@@ -70,15 +124,30 @@ void test_core_link__stat_hardlink(void)
 {
 	struct stat st;
 
-	cl_git_rewritefile("hardlink1", "This file has many names!\n");
-	do_hardlink("hardlink1", "hardlink2");
+	cl_git_rewritefile("stat_hardlink1", "This file has many names!\n");
+	do_hardlink("stat_hardlink1", "stat_hardlink2");
 
-	cl_must_pass(p_stat("hardlink1", &st));
+	cl_must_pass(p_stat("stat_hardlink1", &st));
 	cl_assert(S_ISREG(st.st_mode));
 	cl_assert_equal_i(26, st.st_size);
 
-	cl_must_pass(p_stat("hardlink2", &st));
+	cl_must_pass(p_stat("stat_hardlink2", &st));
 	cl_assert(S_ISREG(st.st_mode));
 	cl_assert_equal_i(26, st.st_size);
 }
 
+void test_core_link__lstat_hardlink(void)
+{
+	struct stat st;
+
+	cl_git_rewritefile("lstat_hardlink1", "This file has many names!\n");
+	do_hardlink("lstat_hardlink1", "lstat_hardlink2");
+
+	cl_must_pass(p_lstat("lstat_hardlink1", &st));
+	cl_assert(S_ISREG(st.st_mode));
+	cl_assert_equal_i(26, st.st_size);
+
+	cl_must_pass(p_lstat("lstat_hardlink2", &st));
+	cl_assert(S_ISREG(st.st_mode));
+	cl_assert_equal_i(26, st.st_size);
+}
