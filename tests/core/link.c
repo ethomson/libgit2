@@ -29,7 +29,7 @@ static bool is_administrator(void)
 }
 #endif
 
-static void do_symlink(const char *old, const char *new)
+static void do_symlink(const char *old, const char *new, int is_dir)
 {
 #ifndef GIT_WIN32
 	cl_must_pass(symlink(old, new));
@@ -44,7 +44,7 @@ static void do_symlink(const char *old, const char *new)
 	cl_assert(module = GetModuleHandle("kernel32"));
 	cl_assert(pCreateSymbolicLink = (create_symlink_func)GetProcAddress(module, "CreateSymbolicLinkA"));
 
-	cl_win32_pass(pCreateSymbolicLink(new, old, 0));
+	cl_win32_pass(pCreateSymbolicLink(new, old, is_dir));
 #endif
 }
 
@@ -72,7 +72,7 @@ void test_core_link__stat_symlink(void)
 	struct stat st;
 
 	cl_git_rewritefile("stat_target", "This is the target of a symbolic link.\n");
-	do_symlink("stat_target", "stat_symlink");
+	do_symlink("stat_target", "stat_symlink", 0);
 
 	cl_must_pass(p_stat("stat_target", &st));
 	cl_assert(S_ISREG(st.st_mode));
@@ -88,7 +88,7 @@ void test_core_link__stat_symlink_directory(void)
 	struct stat st;
 
 	p_mkdir("stat_dirtarget", 0777);
-	do_symlink("stat_dirtarget", "stat_dirlink");
+	do_symlink("stat_dirtarget", "stat_dirlink", 1);
 
 	cl_must_pass(p_stat("stat_dirtarget", &st));
 	cl_assert(S_ISDIR(st.st_mode));
@@ -101,9 +101,19 @@ void test_core_link__stat_dangling_symlink(void)
 {
 	struct stat st;
 
-	do_symlink("stat_nonexistent", "stat_dangling");
+	do_symlink("stat_nonexistent", "stat_dangling", 0);
 
 	cl_must_fail(p_stat("stat_nonexistent", &st));
+	cl_must_fail(p_stat("stat_dangling", &st));
+}
+
+void test_core_link__stat_dangling_symlink_directory(void)
+{
+	struct stat st;
+
+	do_symlink("stat_nonexistent", "stat_dangling_dir", 1);
+
+	cl_must_fail(p_stat("stat_nonexistent_dir", &st));
 	cl_must_fail(p_stat("stat_dangling", &st));
 }
 
@@ -118,7 +128,7 @@ void test_core_link__lstat_symlink(void)
 	git_buf_join(&target_path, '/', clar_sandbox_path(), "lstat_target");
 
 	cl_git_rewritefile("lstat_target", "This is the target of a symbolic link.\n");
-	do_symlink(git_buf_cstr(&target_path), "lstat_symlink");
+	do_symlink(git_buf_cstr(&target_path), "lstat_symlink", 0);
 
 	cl_must_pass(p_lstat("lstat_target", &st));
 	cl_assert(S_ISREG(st.st_mode));
@@ -139,7 +149,7 @@ void test_core_link__lstat_symlink_directory(void)
 	git_buf_join(&target_path, '/', clar_sandbox_path(), "lstat_dirtarget");
 
 	p_mkdir("lstat_dirtarget", 0777);
-	do_symlink(git_buf_cstr(&target_path), "lstat_dirlink");
+	do_symlink(git_buf_cstr(&target_path), "lstat_dirlink", 1);
 
 	cl_must_pass(p_lstat("lstat_dirtarget", &st));
 	cl_assert(S_ISDIR(st.st_mode));
@@ -155,11 +165,24 @@ void test_core_link__lstat_dangling_symlink(void)
 {
 	struct stat st;
 
-	do_symlink("lstat_nonexistent", "lstat_dangling");
+	do_symlink("lstat_nonexistent", "lstat_dangling", 0);
 
 	cl_must_fail(p_lstat("lstat_nonexistent", &st));
 
 	cl_must_pass(p_lstat("lstat_dangling", &st));
+	cl_assert(S_ISLNK(st.st_mode));
+	cl_assert_equal_i(strlen("lstat_nonexistent"), st.st_size);
+}
+
+void test_core_link__lstat_dangling_symlink_directory(void)
+{
+	struct stat st;
+
+	do_symlink("lstat_nonexistent", "lstat_dangling_dir", 1);
+
+	cl_must_fail(p_lstat("lstat_nonexistent", &st));
+
+	cl_must_pass(p_lstat("lstat_dangling_dir", &st));
 	cl_assert(S_ISLNK(st.st_mode));
 	cl_assert_equal_i(strlen("lstat_nonexistent"), st.st_size);
 }
