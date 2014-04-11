@@ -1,5 +1,7 @@
 #include "clar_libgit2.h"
 #include "posix.h"
+#include "buffer.h"
+#include "path.h"
 
 #ifdef GIT_WIN32
 static bool is_administrator(void)
@@ -27,12 +29,12 @@ static bool is_administrator(void)
 }
 #endif
 
-static void do_symlink(char *old, char *new)
+static void do_symlink(const char *old, const char *new)
 {
 #ifndef GIT_WIN32
 	cl_must_pass(symlink(old, new));
 #else
-	typedef DWORD (WINAPI *create_symlink_func)(LPTSTR, LPTSTR, DWORD);
+	typedef DWORD (WINAPI *create_symlink_func)(LPCTSTR, LPCTSTR, DWORD);
 	HMODULE module;
 	create_symlink_func pCreateSymbolicLink;
 
@@ -93,10 +95,16 @@ void test_core_link__stat_dangling_symlink(void)
 
 void test_core_link__lstat_symlink(void)
 {
+	git_buf target_path = GIT_BUF_INIT;
 	struct stat st;
 
+	/* Windows always writes the canonical path as the link target, so
+	 * write the full path on all platforms.
+	 */
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "lstat_target");
+
 	cl_git_rewritefile("lstat_target", "This is the target of a symbolic link.\n");
-	do_symlink("lstat_target", "lstat_symlink");
+	do_symlink(git_buf_cstr(&target_path), "lstat_symlink");
 
 	cl_must_pass(p_lstat("lstat_target", &st));
 	cl_assert(S_ISREG(st.st_mode));
@@ -104,7 +112,9 @@ void test_core_link__lstat_symlink(void)
 
 	cl_must_pass(p_lstat("lstat_symlink", &st));
 	cl_assert(S_ISLNK(st.st_mode));
-	cl_assert_equal_i(strlen("lstat_target"), st.st_size);
+	cl_assert_equal_i(git_buf_len(&target_path), st.st_size);
+
+	git_buf_free(&target_path);
 }
 
 void test_core_link__lstat_dangling_symlink(void)
