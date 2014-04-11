@@ -3,6 +3,19 @@
 #include "buffer.h"
 #include "path.h"
 
+void test_core_link__cleanup(void)
+{
+#ifdef GIT_WIN32
+	RemoveDirectory("lstat_junction");
+	RemoveDirectory("lstat_dangling");
+	RemoveDirectory("lstat_dangling_dir");
+
+	RemoveDirectory("stat_junction");
+	RemoveDirectory("stat_dangling");
+	RemoveDirectory("stat_dangling_dir");
+#endif
+}
+
 #ifdef GIT_WIN32
 static bool is_administrator(void)
 {
@@ -32,6 +45,8 @@ static bool is_administrator(void)
 static void do_symlink(const char *old, const char *new, int is_dir)
 {
 #ifndef GIT_WIN32
+	GIT_UNUSED(is_dir);
+
 	cl_must_pass(symlink(old, new));
 #else
 	typedef DWORD (WINAPI *create_symlink_func)(LPCTSTR, LPCTSTR, DWORD);
@@ -65,6 +80,179 @@ static void do_hardlink(const char *old, const char *new)
 
 	cl_win32_pass(pCreateHardLink(new, old, 0));
 #endif
+}
+
+#ifdef GIT_WIN32
+
+typedef struct _REPARSE_DATA_BUFFER {
+	ULONG  ReparseTag;
+	USHORT ReparseDataLength;
+	USHORT Reserved;
+	union {
+		struct {
+			USHORT SubstituteNameOffset;
+			USHORT SubstituteNameLength;
+			USHORT PrintNameOffset;
+			USHORT PrintNameLength;
+			ULONG  Flags;
+			WCHAR  PathBuffer[1];
+		} SymbolicLinkReparseBuffer;
+		struct {
+			USHORT SubstituteNameOffset;
+			USHORT SubstituteNameLength;
+			USHORT PrintNameOffset;
+			USHORT PrintNameLength;
+			WCHAR  PathBuffer[1];
+		} MountPointReparseBuffer;
+		struct {
+			UCHAR DataBuffer[1];
+		} GenericReparseBuffer;
+	};
+} REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
+
+#define REPARSE_DATA_HEADER_SIZE			8
+#define REPARSE_DATA_MOUNTPOINT_HEADER_SIZE	8
+#define REPARSE_DATA_UNION_SIZE				12
+
+static void do_junction(const char *old, const char *new)
+{
+	REPARSE_DATA_BUFFER *reparse_buf;
+	HANDLE handle;
+	git_buf unparsed_buf = GIT_BUF_INIT;
+	wchar_t *subst_utf16, *print_utf16;
+	DWORD ioctl_ret;
+	int subst_utf16_len, subst_byte_len, print_utf16_len, print_byte_len, ret;
+	size_t reparse_buflen, i;
+
+	/* Junction targets must be the unparsed name, starting with \??\, using
+	 * backslashes instead of forward, and end in a trailing backslash.
+	 * eg: \??\C:\Foo\
+	 */
+	git_buf_puts(&unparsed_buf, "\\??\\");
+
+	for (i = 0; i < strlen(old); i++)
+		git_buf_putc(&unparsed_buf, old[i] == '/' ? '\\' : old[i]);
+
+	git_buf_putc(&unparsed_buf, '\\');
+
+	subst_utf16_len = git__utf8_to_16(NULL, 0, git_buf_cstr(&unparsed_buf));
+	subst_byte_len = subst_utf16_len * sizeof(WCHAR);
+
+	print_utf16_len = subst_utf16_len - 4;
+	print_byte_len = subst_byte_len - (4 * sizeof(WCHAR));
+
+	/* The junction must be an empty directory before the junction attribute
+	 * can be added.
+	 */
+	cl_win32_pass(CreateDirectoryA(new, NULL));
+
+	handle = CreateFileA(new, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+		FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+	cl_win32_pass(handle != INVALID_HANDLE_VALUE);
+
+	reparse_buflen = REPARSE_DATA_HEADER_SIZE +
+		REPARSE_DATA_MOUNTPOINT_HEADER_SIZE +
+		subst_byte_len + print_byte_len;
+
+	reparse_buf = LocalAlloc(LMEM_FIXED|LMEM_ZEROINIT, reparse_buflen);
+	cl_assert(reparse_buf);
+
+	subst_utf16 = reparse_buf->MountPointReparseBuffer.PathBuffer;
+	print_utf16 = subst_utf16 + subst_utf16_len;
+
+	ret = git__utf8_to_16(subst_utf16, subst_utf16_len,
+		git_buf_cstr(&unparsed_buf));
+	cl_assert_equal_i(subst_utf16_len, ret);
+
+	ret = git__utf8_to_16(print_utf16,
+		print_utf16_len, git_buf_cstr(&unparsed_buf) + 4);
+	cl_assert_equal_i(print_utf16_len, ret);
+
+	reparse_buf->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
+	reparse_buf->MountPointReparseBuffer.SubstituteNameOffset = 0;
+	reparse_buf->MountPointReparseBuffer.SubstituteNameLength =
+		subst_byte_len - sizeof(WCHAR);
+	reparse_buf->MountPointReparseBuffer.PrintNameOffset = subst_byte_len;
+	reparse_buf->MountPointReparseBuffer.PrintNameLength =
+		print_byte_len - sizeof(WCHAR);
+
+	reparse_buf->ReparseDataLength =
+		reparse_buflen - REPARSE_DATA_HEADER_SIZE;
+
+	cl_win32_pass(DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT,
+		reparse_buf, reparse_buflen, NULL, 0, &ioctl_ret, NULL));
+
+	CloseHandle(handle);
+	LocalFree(reparse_buf);
+}
+
+static void do_generic_reparse(const char *path)
+{
+	REPARSE_GUID_DATA_BUFFER *reparse_buf;
+	HANDLE handle;
+	DWORD ioctl_ret;
+
+	const char *reparse_data = "Reparse points are silly.";
+	size_t reparse_buflen = REPARSE_GUID_DATA_BUFFER_HEADER_SIZE +
+		strlen(reparse_data) + 1;
+
+	reparse_buf = LocalAlloc(LMEM_FIXED|LMEM_ZEROINIT, reparse_buflen);
+	cl_assert(reparse_buf);
+
+	reparse_buf->ReparseTag = 42;
+	reparse_buf->ReparseDataLength = strlen(reparse_data) + 1;
+
+	reparse_buf->ReparseGuid.Data1 = 0xdeadbeef;
+	reparse_buf->ReparseGuid.Data2 = 0xdead;
+	reparse_buf->ReparseGuid.Data3 = 0xbeef;
+	reparse_buf->ReparseGuid.Data4[0] = 42;
+	reparse_buf->ReparseGuid.Data4[1] = 42;
+	reparse_buf->ReparseGuid.Data4[2] = 42;
+	reparse_buf->ReparseGuid.Data4[3] = 42;
+	reparse_buf->ReparseGuid.Data4[4] = 42;
+	reparse_buf->ReparseGuid.Data4[5] = 42;
+	reparse_buf->ReparseGuid.Data4[6] = 42;
+	reparse_buf->ReparseGuid.Data4[7] = 42;
+	reparse_buf->ReparseGuid.Data4[8] = 42;
+
+	memcpy(reparse_buf->GenericReparseBuffer.DataBuffer,
+		reparse_data, strlen(reparse_data) + 1);
+
+	handle = CreateFileA(path, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+		FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+	cl_win32_pass(handle != INVALID_HANDLE_VALUE);
+
+	cl_win32_pass(DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT,
+		reparse_buf,
+		reparse_buf->ReparseDataLength + REPARSE_GUID_DATA_BUFFER_HEADER_SIZE,
+		NULL, 0, &ioctl_ret, NULL));
+
+	CloseHandle(handle);
+	LocalFree(reparse_buf);
+}
+
+#endif
+
+void test_core_link__stat_regular_file(void)
+{
+	struct stat st;
+
+	cl_git_rewritefile("stat_regfile", "This is a regular file!\n");
+
+	cl_must_pass(p_stat("stat_regfile", &st));
+	cl_assert(S_ISREG(st.st_mode));
+	cl_assert_equal_i(24, st.st_size);
+}
+
+void test_core_link__lstat_regular_file(void)
+{
+	struct stat st;
+
+	cl_git_rewritefile("lstat_regfile", "This is a regular file!\n");
+
+	cl_must_pass(p_stat("lstat_regfile", &st));
+	cl_assert(S_ISREG(st.st_mode));
+	cl_assert_equal_i(24, st.st_size);
 }
 
 void test_core_link__stat_symlink(void)
@@ -187,6 +375,48 @@ void test_core_link__lstat_dangling_symlink_directory(void)
 	cl_assert_equal_i(strlen("lstat_nonexistent"), st.st_size);
 }
 
+void test_core_link__stat_junction(void)
+{
+#ifdef GIT_WIN32
+	git_buf target_path = GIT_BUF_INIT;
+	struct stat st;
+
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "stat_junctarget");
+
+	p_mkdir("stat_junctarget", 0777);
+	do_junction(git_buf_cstr(&target_path), "stat_junction");
+
+	cl_must_pass(p_stat("stat_junctarget", &st));
+	cl_assert(S_ISDIR(st.st_mode));
+
+	cl_must_pass(p_stat("stat_junction", &st));
+	cl_assert(S_ISDIR(st.st_mode));
+
+	git_buf_free(&target_path);
+#endif
+}
+
+void test_core_link__lstat_junction(void)
+{
+#ifdef GIT_WIN32
+	git_buf target_path = GIT_BUF_INIT;
+	struct stat st;
+
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "lstat_junctarget");
+
+	p_mkdir("lstat_junctarget", 0777);
+	do_junction(git_buf_cstr(&target_path), "lstat_junction");
+
+	cl_must_pass(p_lstat("lstat_junctarget", &st));
+	cl_assert(S_ISDIR(st.st_mode));
+
+	cl_must_pass(p_stat("lstat_junction", &st));
+	cl_assert(S_ISLNK(st.st_mode));
+
+	git_buf_free(&target_path);
+#endif
+}
+
 void test_core_link__stat_hardlink(void)
 {
 	struct stat st;
@@ -217,4 +447,36 @@ void test_core_link__lstat_hardlink(void)
 	cl_must_pass(p_lstat("lstat_hardlink2", &st));
 	cl_assert(S_ISREG(st.st_mode));
 	cl_assert_equal_i(26, st.st_size);
+}
+
+void test_core_link__stat_reparse_point(void)
+{
+#ifdef GIT_WIN32
+	struct stat st;
+
+	/* Generic reparse points should be treated as regular files, only
+	 * symlinks and junctions should be treated as links.
+	 */
+
+	cl_git_rewritefile("stat_reparse", "This is a reparse point!\n");
+	do_generic_reparse("stat_reparse");
+
+	cl_must_pass(p_lstat("stat_reparse", &st));
+	cl_assert(S_ISREG(st.st_mode));
+	cl_assert_equal_i(25, st.st_size);
+#endif
+}
+
+void test_core_link__lstat_reparse_point(void)
+{
+#ifdef GIT_WIN32
+	struct stat st;
+
+	cl_git_rewritefile("lstat_reparse", "This is a reparse point!\n");
+	do_generic_reparse("lstat_reparse");
+
+	cl_must_pass(p_lstat("lstat_reparse", &st));
+	cl_assert(S_ISREG(st.st_mode));
+	cl_assert_equal_i(25, st.st_size);
+#endif
 }
