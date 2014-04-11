@@ -83,6 +83,20 @@ void test_core_link__stat_symlink(void)
 	cl_assert_equal_i(39, st.st_size);
 }
 
+void test_core_link__stat_symlink_directory(void)
+{
+	struct stat st;
+
+	p_mkdir("stat_dirtarget", 0777);
+	do_symlink("stat_dirtarget", "stat_dirlink");
+
+	cl_must_pass(p_stat("stat_dirtarget", &st));
+	cl_assert(S_ISDIR(st.st_mode));
+
+	cl_must_pass(p_stat("stat_dirlink", &st));
+	cl_assert(S_ISDIR(st.st_mode));
+}
+
 void test_core_link__stat_dangling_symlink(void)
 {
 	struct stat st;
@@ -111,6 +125,26 @@ void test_core_link__lstat_symlink(void)
 	cl_assert_equal_i(39, st.st_size);
 
 	cl_must_pass(p_lstat("lstat_symlink", &st));
+	cl_assert(S_ISLNK(st.st_mode));
+	cl_assert_equal_i(git_buf_len(&target_path), st.st_size);
+
+	git_buf_free(&target_path);
+}
+
+void test_core_link__lstat_symlink_directory(void)
+{
+	git_buf target_path = GIT_BUF_INIT;
+	struct stat st;
+
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "lstat_dirtarget");
+
+	p_mkdir("lstat_dirtarget", 0777);
+	do_symlink(git_buf_cstr(&target_path), "lstat_dirlink");
+
+	cl_must_pass(p_lstat("lstat_dirtarget", &st));
+	cl_assert(S_ISDIR(st.st_mode));
+
+	cl_must_pass(p_lstat("lstat_dirlink", &st));
 	cl_assert(S_ISLNK(st.st_mode));
 	cl_assert_equal_i(git_buf_len(&target_path), st.st_size);
 
