@@ -9,10 +9,12 @@ void test_core_link__cleanup(void)
 	RemoveDirectory("lstat_junction");
 	RemoveDirectory("lstat_dangling");
 	RemoveDirectory("lstat_dangling_dir");
+	RemoveDirectory("lstat_dangling_junction");
 
 	RemoveDirectory("stat_junction");
 	RemoveDirectory("stat_dangling");
 	RemoveDirectory("stat_dangling_dir");
+	RemoveDirectory("stat_dangling_junction");
 #endif
 }
 
@@ -396,6 +398,26 @@ void test_core_link__stat_junction(void)
 #endif
 }
 
+void test_core_link__stat_dangling_junction(void)
+{
+#ifdef GIT_WIN32
+	git_buf target_path = GIT_BUF_INIT;
+	struct stat st;
+
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "stat_nonexistent_junctarget");
+
+	p_mkdir("stat_nonexistent_junctarget", 0777);
+	do_junction(git_buf_cstr(&target_path), "stat_dangling_junction");
+
+	RemoveDirectory("stat_nonexistent_junctarget");
+
+	cl_must_fail(p_stat("stat_nonexistent_junctarget", &st));
+	cl_must_fail(p_stat("stat_dangling_junction", &st));
+
+	git_buf_free(&target_path);
+#endif
+}
+
 void test_core_link__lstat_junction(void)
 {
 #ifdef GIT_WIN32
@@ -412,6 +434,29 @@ void test_core_link__lstat_junction(void)
 
 	cl_must_pass(p_stat("lstat_junction", &st));
 	cl_assert(S_ISLNK(st.st_mode));
+
+	git_buf_free(&target_path);
+#endif
+}
+
+void test_core_link__lstat_dangling_junction(void)
+{
+#ifdef GIT_WIN32
+	git_buf target_path = GIT_BUF_INIT;
+	struct stat st;
+
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "lstat_nonexistent_junctarget");
+
+	p_mkdir("lstat_nonexistent_junctarget", 0777);
+	do_junction(git_buf_cstr(&target_path), "lstat_dangling_junction");
+
+	RemoveDirectory("lstat_nonexistent_junctarget");
+
+	cl_must_fail(p_lstat("lstat_nonexistent_junctarget", &st));
+
+	cl_must_pass(p_lstat("lstat_dangling_junction", &st));
+	cl_assert(S_ISLNK(st.st_mode));
+	cl_assert_equal_i(git_buf_len(&target_path), st.st_size);
 
 	git_buf_free(&target_path);
 #endif
