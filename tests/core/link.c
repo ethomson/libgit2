@@ -539,3 +539,91 @@ void test_core_link__lstat_reparse_point(void)
 	cl_assert_equal_i(25, st.st_size);
 #endif
 }
+
+void test_core_link__readlink_nonexistent_file(void)
+{
+	char buf[2048];
+
+	cl_must_fail(p_readlink("readlink_nonexistent", buf, 2048));
+	cl_assert_equal_i(ENOENT, errno);
+}
+
+void test_core_link__readlink_normal_file(void)
+{
+	char buf[2048];
+
+	cl_git_rewritefile("readlink_regfile", "This is a regular file!\n");
+	cl_must_fail(p_readlink("readlink_regfile", buf, 2048));
+	cl_assert_equal_i(EINVAL, errno);
+}
+
+void test_core_link__readlink_symlink(void)
+{
+	git_buf target_path = GIT_BUF_INIT;
+	int len;
+	char buf[2048];
+
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "readlink_target");
+
+	cl_git_rewritefile("readlink_target", "This is the target of a symlink\n");
+	do_symlink(git_buf_cstr(&target_path), "readlink_link", 0);
+
+	len = p_readlink("readlink_link", buf, 2048);
+	cl_must_pass(len);
+
+	buf[len] = 0;
+
+	cl_assert_equal_s(git_buf_cstr(&target_path), buf);
+
+	git_buf_free(&target_path);
+}
+
+void test_core_link__readlink_dangling(void)
+{
+	git_buf target_path = GIT_BUF_INIT;
+	int len;
+	char buf[2048];
+
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "readlink_nonexistent");
+
+	do_symlink(git_buf_cstr(&target_path), "readlink_dangling", 0);
+
+	len = p_readlink("readlink_dangling", buf, 2048);
+	cl_must_pass(len);
+
+	buf[len] = 0;
+
+	cl_assert_equal_s(git_buf_cstr(&target_path), buf);
+
+	git_buf_free(&target_path);
+}
+
+void test_core_link__readlink_multiple(void)
+{
+	git_buf target_path = GIT_BUF_INIT,
+		path3 = GIT_BUF_INIT, path2 = GIT_BUF_INIT, path1 = GIT_BUF_INIT;
+	int len;
+	char buf[2048];
+
+	git_buf_join(&target_path, '/', clar_sandbox_path(), "readlink_final");
+	git_buf_join(&path3, '/', clar_sandbox_path(), "readlink_3");
+	git_buf_join(&path2, '/', clar_sandbox_path(), "readlink_2");
+	git_buf_join(&path1, '/', clar_sandbox_path(), "readlink_1");
+
+	do_symlink(git_buf_cstr(&target_path), git_buf_cstr(&path3), 0);
+	do_symlink(git_buf_cstr(&path3), git_buf_cstr(&path2), 0);
+	do_symlink(git_buf_cstr(&path2), git_buf_cstr(&path1), 0);
+
+	len = p_readlink("readlink_1", buf, 2048);
+	cl_must_pass(len);
+
+	buf[len] = 0;
+
+	cl_assert_equal_s(git_buf_cstr(&path2), buf);
+
+	git_buf_free(&path1);
+	git_buf_free(&path2);
+	git_buf_free(&path3);
+	git_buf_free(&target_path);
+}
+
