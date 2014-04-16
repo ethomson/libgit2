@@ -83,34 +83,38 @@ static int header_path_len(patch_parse_ctx *ctx)
 	return len;
 }
 
-static int parse_header_path(
-	char **out,
-	patch_parse_ctx *ctx)
+static int parse_header_path_buf(git_buf *path, patch_parse_ctx *ctx)
 {
-	git_buf path = GIT_BUF_INIT;
-	int path_len, error;
+	int path_len, error = 0;
 
 	path_len = header_path_len(ctx);
 
-	if ((error = git_buf_put(&path, ctx->line, path_len)) < 0)
+	if ((error = git_buf_put(path, ctx->line, path_len)) < 0)
 		goto done;
 
 	parse_advance_chars(ctx, path_len);
 
-	git_buf_rtrim(&path);
+	git_buf_rtrim(path);
 
-	if (path.size > 0 && path.ptr[0] == '"')
-		error = git_buf_unquote(&path);
+	if (path->size > 0 && path->ptr[0] == '"')
+		error = git_buf_unquote(path);
 
 	if (error < 0)
 		goto done;
 
-	git_path_squash_slashes(&path);
+	git_path_squash_slashes(path);
+
+done:
+	return error;
+}
+
+static int parse_header_path(char **out, patch_parse_ctx *ctx)
+{
+	git_buf path = GIT_BUF_INIT;
+	int error = parse_header_path_buf(&path, ctx);
 
 	*out = git_buf_detach(&path);
 
-done:
-	git_buf_free(&path);
 	return error;
 }
 
@@ -227,14 +231,53 @@ static int parse_header_git_newfilemode(
 	return parse_header_mode(&patch->nfile.file->mode, ctx);
 }
 
+static int parse_header_rename(
+	char **out,
+	char **header_path,
+	patch_parse_ctx *ctx)
+{
+	git_buf path = GIT_BUF_INIT;
+	size_t header_path_len;
+
+	if (header_path == NULL)
+		return parse_err("rename without proper git diff header at line %d",
+			ctx->line_num);
+
+	header_path_len = strlen(*header_path);
+
+	if (parse_header_path_buf(&path, ctx) < 0)
+		return -1;
+
+	if (header_path_len < git_buf_len(&path))
+		return parse_err("rename path is invalid at line %d", ctx->line_num);
+
+	if (strncmp(*header_path + (header_path_len - path.size),
+		git_buf_cstr(&path), git_buf_len(&path)) != 0)
+		return parse_err("rename path does not match header at line %d",
+			ctx->line_num);
+
+	*out = *header_path;
+	*header_path = NULL;
+
+	git_buf_free(&path);
+
+	return 0;
+}
+
 static int parse_header_renamefrom(git_patch *patch, patch_parse_ctx *ctx)
 {
-	return parse_header_path((char **)&patch->ofile.file->path, ctx);
+	return parse_header_rename(
+		(char **)&patch->ofile.file->path,
+		&ctx->header_old_path,
+		ctx);
 }
 
 static int parse_header_renameto(git_patch *patch, patch_parse_ctx *ctx)
 {
-	return parse_header_path((char **)&patch->nfile.file->path, ctx);
+	return parse_header_rename(
+		(char **)&patch->nfile.file->path,
+		&ctx->header_new_path,
+		ctx);
 }
 
 typedef struct {

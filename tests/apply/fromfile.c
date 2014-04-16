@@ -175,7 +175,7 @@ static void apply_rename_patchfile(
 
 void test_apply_fromfile__rename_exact(void)
 {
-	apply_rename_patchfile(FILE_ORIGINAL, FILE_ORIGINAL, PATCH_RENAME_EXACT, "b/newfile.txt", 0);
+	apply_rename_patchfile(FILE_ORIGINAL, FILE_ORIGINAL, PATCH_RENAME_EXACT, "b/newfile.txt", 0100644);
 }
 
 void test_apply_fromfile__rename_similar(void)
