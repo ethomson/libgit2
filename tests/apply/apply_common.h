@@ -308,3 +308,25 @@
 	" and this\n" \
 	" is additional context\n" \
 	" below it!\n"
+
+#define PATCH_MODECHANGE_UNCHANGED \
+	"diff --git a/file.txt b/file.txt\n" \
+	"old mode 100644\n" \
+	"new mode 100755\n"
+
+#define PATCH_MODECHANGE_MODIFIED \
+	"diff --git a/file.txt b/file.txt\n" \
+	"old mode 100644\n" \
+	"new mode 100755\n" \
+	"index 9432026..cd8fd12\n" \
+	"--- a/file.txt\n" \
+	"+++ b/file.txt\n" \
+	"@@ -3,7 +3,7 @@ this is some context!\n" \
+	" around some lines\n" \
+	" that will change\n" \
+	" yes it is!\n" \
+	"-(this line is changed)\n" \
+	"+(THIS line is changed!)\n" \
+	" and this\n" \
+	" is additional context\n" \
+	" below it!\n"

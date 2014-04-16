@@ -286,7 +286,8 @@ int git_apply__patch(
 
 	if (patch->delta->status != GIT_DELTA_DELETED) {
 		filename = git__strdup(patch->nfile.file->path);
-		mode = patch->nfile.file->mode;
+		mode = patch->nfile.file->mode ?
+			patch->nfile.file->mode : GIT_FILEMODE_BLOB;
 	}
 
 	/* TODO: binary */

@@ -188,3 +188,13 @@ void test_apply_fromfile__rename_similar_quotedname(void)
 	apply_rename_patchfile(FILE_ORIGINAL, FILE_CHANGE_MIDDLE, PATCH_RENAME_SIMILAR_QUOTEDNAME,
 		"b/foo\"bar.txt", 0100644);
 }
+
+void test_apply_fromfile__modechange(void)
+{
+	apply_rename_patchfile(FILE_ORIGINAL, FILE_ORIGINAL, PATCH_MODECHANGE_UNCHANGED, "b/file.txt", 0100755);
+}
+
+void test_apply_fromfile__modechange_with_modification(void)
+{
+	apply_rename_patchfile(FILE_ORIGINAL, FILE_CHANGE_MIDDLE, PATCH_MODECHANGE_MODIFIED, "b/file.txt", 0100755);
+}
