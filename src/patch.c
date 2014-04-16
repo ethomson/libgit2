@@ -51,16 +51,16 @@ static int parse_advance_expected(
 
 static int parse_advance_ws(patch_parse_ctx *ctx)
 {
-	bool ws = 0;
+	int ret = -1;
 
 	while (ctx->line_len > 0 && isspace(ctx->line[0])) {
 		ctx->line++;
 		ctx->line_len--;
 		ctx->remain--;
-		ws = 1;
+		ret = 0;
 	}
 
-	return ws ? 0 : -1;
+	return ret;
 }
 
 static int header_path_len(patch_parse_ctx *ctx)
@@ -237,9 +237,9 @@ static int parse_header_rename(
 	patch_parse_ctx *ctx)
 {
 	git_buf path = GIT_BUF_INIT;
-	size_t header_path_len;
+	size_t header_path_len, prefix_len;
 
-	if (header_path == NULL)
+	if (*header_path == NULL)
 		return parse_err("rename without proper git diff header at line %d",
 			ctx->line_num);
 
@@ -251,8 +251,18 @@ static int parse_header_rename(
 	if (header_path_len < git_buf_len(&path))
 		return parse_err("rename path is invalid at line %d", ctx->line_num);
 
-	if (strncmp(*header_path + (header_path_len - path.size),
-		git_buf_cstr(&path), git_buf_len(&path)) != 0)
+	/* This sanity check exists because git core uses the data in the
+	 * "rename from" / "rename to" lines, but it's formatted differently
+	 * than the other paths and lacks the normal prefix.  This irregularity
+	 * causes us to ignore these paths (we always store the prefixed paths)
+	 * but instead validate that they match the suffix of the paths we parsed
+	 * since we would behave differently from git core if they ever differed.
+	 * Instead, we raise an error, rather than parsing differently.
+	 */
+	prefix_len = header_path_len - path.size;
+
+	if (strncmp(*header_path + prefix_len, path.ptr, path.size) != 0 ||
+		prefix_len > 0 && (*header_path)[prefix_len - 1] != '/')
 		return parse_err("rename path does not match header at line %d",
 			ctx->line_num);
 
@@ -266,6 +276,8 @@ static int parse_header_rename(
 
 static int parse_header_renamefrom(git_patch *patch, patch_parse_ctx *ctx)
 {
+	patch->delta->status |= GIT_DELTA_RENAMED;
+
 	return parse_header_rename(
 		(char **)&patch->ofile.file->path,
 		&ctx->header_old_path,
@@ -274,6 +286,8 @@ static int parse_header_renamefrom(git_patch *patch, patch_parse_ctx *ctx)
 
 static int parse_header_renameto(git_patch *patch, patch_parse_ctx *ctx)
 {
+	patch->delta->status |= GIT_DELTA_RENAMED;
+
 	return parse_header_rename(
 		(char **)&patch->nfile.file->path,
 		&ctx->header_new_path,
