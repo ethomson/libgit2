@@ -330,3 +330,99 @@
 	" and this\n" \
 	" is additional context\n" \
 	" below it!\n"
+
+#define PATCH_NOISY \
+	"This is some\nleading noise\n@@ - that\nlooks like a hunk header\n" \
+	"but actually isn't and should parse ok\n" \
+	PATCH_ORIGINAL_TO_CHANGE_MIDDLE \
+	"plus some trailing garbage for good measure\n"
+
+#define PATCH_NOISY_NOCONTEXT \
+	"This is some\nleading noise\n@@ - that\nlooks like a hunk header\n" \
+	"but actually isn't and should parse ok\n" \
+	PATCH_ORIGINAL_TO_CHANGE_MIDDLE_NOCONTEXT \
+	"plus some trailing garbage for good measure\n"
+
+#define PATCH_TRUNCATED_1 \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 9432026..cd8fd12 100644\n" \
+	"--- a/file.txt\n" \
+	"+++ b/file.txt\n" \
+	"@@ -3,7 +3,7 @@ this is some context!\n" \
+	" around some lines\n" \
+	" that will change\n" \
+	" yes it is!\n" \
+	"-(this line is changed)\n" \
+	"+(THIS line is changed!)\n" \
+	" and this\n"
+
+#define PATCH_TRUNCATED_2 \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 9432026..cd8fd12 100644\n" \
+	"--- a/file.txt\n" \
+	"+++ b/file.txt\n" \
+	"@@ -3,7 +3,7 @@ this is some context!\n" \
+	" around some lines\n" \
+	"-(this line is changed)\n" \
+	"+(THIS line is changed!)\n" \
+	" and this\n" \
+	" is additional context\n" \
+	" below it!\n"
+
+#define PATCH_TRUNCATED_3 \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 9432026..cd8fd12 100644\n" \
+	"--- a/file.txt\n" \
+	"+++ b/file.txt\n" \
+	"@@ -3,7 +3,7 @@ this is some context!\n" \
+	" around some lines\n" \
+	" that will change\n" \
+	" yes it is!\n" \
+	"+(THIS line is changed!)\n" \
+	" and this\n" \
+	" is additional context\n" \
+	" below it!\n"
+
+#define FILE_EMPTY_CONTEXT_ORIGINAL \
+	"this\nhas\nan\n\nempty\ncontext\nline\n"
+
+#define FILE_EMPTY_CONTEXT_MODIFIED \
+	"this\nhas\nan\n\nempty...\ncontext\nline\n"
+
+#define PATCH_EMPTY_CONTEXT \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 398d2df..bb15234 100644\n" \
+	"--- a/file.txt\n" \
+	"+++ b/file.txt\n" \
+	"@@ -2,6 +2,6 @@ this\n" \
+	" has\n" \
+	" an\n" \
+	"\n" \
+	"-empty\n" \
+	"+empty...\n" \
+	" context\n" \
+	" line\n"
+
+#define FILE_APPEND_NO_NL \
+	"hey!\n" \
+	"this is some context!\n" \
+	"around some lines\n" \
+	"that will change\n" \
+	"yes it is!\n" \
+	"(this line is changed)\n" \
+	"and this\n" \
+	"is additional context\n" \
+	"below it!\n" \
+	"added line with no nl"
+
+#define PATCH_APPEND_NO_NL \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 9432026..83759c0 100644\n" \
+	"--- a/file.txt\n" \
+	"+++ b/file.txt\n" \
+	"@@ -7,3 +7,4 @@ yes it is!\n" \
+	" and this\n" \
+	" is additional context\n" \
+	" below it!\n" \
+	"+added line with no nl\n" \
+	"\\ No newline at end of file\n"

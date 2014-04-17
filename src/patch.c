@@ -137,8 +137,13 @@ static int parse_header_mode(uint16_t *mode, patch_parse_ctx *ctx)
 	if (ctx->line_len < 1 || !git__isdigit(ctx->line[0]))
 		return parse_err("invalid file mode at line %d", ctx->line_num);
 
-	if ((ret = git__strtonl32(&m, ctx->line, ctx->line_len, &end, 8)) >= 0)
-		*mode = (uint16_t)m;
+	if ((ret = git__strtonl32(&m, ctx->line, ctx->line_len, &end, 8)) < 0)
+		return ret;
+
+	if (m > UINT16_MAX)
+		return -1;
+
+	*mode = (uint16_t)m;
 
 	parse_advance_chars(ctx, (end - ctx->line));
 
@@ -171,7 +176,10 @@ static int parse_header_oid(
 
 static int parse_header_git_index(git_patch *patch, patch_parse_ctx *ctx)
 {
-	/* TODO: fix */
+	/*
+	 * TODO: we read the prefix provided in the diff into the delta's id
+	 * field, but do not mark is at an abbreviated id.
+	 */
 	size_t oid_len, nid_len;
 
 	if (parse_header_oid(&patch->delta->old_file.id, &oid_len, ctx) < 0 ||
@@ -294,6 +302,49 @@ static int parse_header_renameto(git_patch *patch, patch_parse_ctx *ctx)
 		ctx);
 }
 
+static int parse_header_percent(uint16_t *out, patch_parse_ctx *ctx)
+{
+	int32_t val;
+	char *end;
+
+	if (ctx->line_len < 1 || !git__isdigit(ctx->line[0]) ||
+		git__strtonl32(&val, ctx->line, ctx->line_len, &end, 10) < 0)
+		return -1;
+
+	parse_advance_chars(ctx, (end - ctx->line));
+
+	if (parse_advance_expected(ctx, "%", 1) < 0)
+		return -1;
+
+	if (val > 100)
+		return -1;
+
+	*out = val;
+	return 0;
+}
+
+static int parse_header_similarity(git_patch *patch, patch_parse_ctx *ctx)
+{
+	if (parse_header_percent(&patch->delta->similarity, ctx) < 0)
+		return parse_err("invalid similarity percentage at line %d",
+			ctx->line_num);
+
+	return 0;
+}
+
+static int parse_header_dissimilarity(git_patch *patch, patch_parse_ctx *ctx)
+{
+	uint16_t dissimilarity;
+
+	if (parse_header_percent(&dissimilarity, ctx) < 0)
+		return parse_err("invalid similarity percentage at line %d",
+			ctx->line_num);
+
+	patch->delta->similarity = 100 - dissimilarity;
+
+	return 0;
+}
+
 typedef struct {
 	const char *str;
 	int (*fn)(git_patch *, patch_parse_ctx *);
@@ -312,6 +363,8 @@ static const header_git_op header_git_ops[] = {
 	{ "rename to ", parse_header_renameto },
 	{ "rename old ", parse_header_renamefrom },
 	{ "rename new ", parse_header_renameto },
+	{ "similarity index ", parse_header_similarity },
+	{ "dissimilarity index ", parse_header_dissimilarity },
 };
 
 static int parse_header_git(
@@ -370,60 +423,6 @@ done:
 	return error;
 }
 
-static int parse_patch_header(
-	git_patch *patch,
-	patch_parse_ctx *ctx)
-{
-	int error = 0;
-
-	for (ctx->line = ctx->content; ctx->remain > 0; parse_advance_line(ctx)) {
-		if ((ctx->line_len =
-			git__linenlen(ctx->line, ctx->remain)) == 0)
-			break;
-
-		/* This line is too short to be a patch header. */
-		if (ctx->line_len < 6)
-			continue;
-
-		/* TODO : unconnected patch fragments, memcmp("@@ -") == 0 */
-
-		/* This buffer is too short to contain a patch. */
-		if (ctx->remain < ctx->line_len + 6)
-			break;
-
-		if (ctx->line_len >= 11 && memcmp(ctx->line, "diff --git ", 11) == 0) {
-			if ((error = parse_header_git(patch, ctx)) < 0)
-				goto done;
-
-			/* For modechange only patches, it does not include filenames;
-			 * instead we need to use the paths in the diff --git header.
-			 */
-			if (!patch->ofile.file->path && !patch->nfile.file->path) {
-				if (!ctx->header_old_path || !ctx->header_new_path) {
-					error = parse_err("git diff header lacks old / new paths");
-					goto done;
-				}
-
-				patch->ofile.file->path = ctx->header_old_path;
-				ctx->header_old_path = NULL;
-
-				patch->nfile.file->path = ctx->header_new_path;
-				ctx->header_new_path = NULL;
-			}
-
-			break;
-		} else {
-			error = parse_err(
-				"Non-git unified patches are not supported at line %d",
-				ctx->line_num);
-			goto done;
-		}
-	}
-
-done:
-	return error;
-}
-
 static int parse_number(size_t *out, patch_parse_ctx *ctx)
 {
 	const char *end;
@@ -450,6 +449,9 @@ static int parse_hunk_header(
 	patch_parse_ctx *ctx)
 {
 	const char *header_start = ctx->line;
+
+	hunk->hunk.old_lines = 1;
+	hunk->hunk.new_lines = 1;
 
 	if (parse_advance_expected(ctx, "@@ -", 4) < 0 ||
 		parse_number(&hunk->hunk.old_start, ctx) < 0)
@@ -489,7 +491,7 @@ static int parse_hunk_header(
 	return 0;
 
 fail:
-	giterr_set(GITERR_PATCH, "Invalid patch hunk header at line %d",
+	giterr_set(GITERR_PATCH, "invalid patch hunk header at line %d",
 		ctx->line_num);
 	return -1;
 }
@@ -502,23 +504,55 @@ static int parse_hunk_body(
 	git_diff_line *line;
 	int error = 0;
 
+	int oldlines = hunk->hunk.old_lines;
+	int newlines = hunk->hunk.new_lines;
+
 	for (;
-		ctx->remain > 4 && memcmp(ctx->line, "@@ -", 4) != 0;
+		ctx->remain > 4 && (oldlines || newlines) &&
+		memcmp(ctx->line, "@@ -", 4) != 0;
 		parse_advance_line(ctx)) {
+		
 		int origin;
+		int prefix = 1;
+
+		if (ctx->line_len == 0 || ctx->line[ctx->line_len - 1] != '\n') {
+			error = parse_err("invalid patch instruction at line %d",
+				ctx->line_num);
+			goto done;
+		}
 
 		switch (ctx->line[0]) {
+		case '\n':
+			prefix = 0;
+
 		case ' ':
 			origin = GIT_DIFF_LINE_CONTEXT;
+			oldlines--;
+			newlines--;
 			break;
+
 		case '-':
 			origin = GIT_DIFF_LINE_DELETION;
+			oldlines--;
 			break;
+
 		case '+':
 			origin = GIT_DIFF_LINE_ADDITION;
+			newlines--;
 			break;
+
+		case '\\':
+			/* Handle "\ No newline"... */
+			if (ctx->line_len < 12 || memcmp(ctx->line, "\\ ", 2) != 0) {
+				error = parse_err("invalid patch hunk at line %d",
+					ctx->line_num);
+				goto done;
+			}
+
+			break;
+
 		default:
-			error = parse_err("Invalid patch hunk at line %d", ctx->line_num);
+			error = parse_err("invalid patch hunk at line %d", ctx->line_num);
 			goto done;
 		}
 
@@ -527,13 +561,115 @@ static int parse_hunk_body(
 
 		memset(line, 0x0, sizeof(git_diff_line));
 
-		line->content = ctx->line + 1;
-		line->content_len = ctx->line_len - 1;
+		line->content = ctx->line + prefix;
+		line->content_len = ctx->line_len - prefix;
 		line->content_offset = ctx->content_len - ctx->remain;
 		line->origin = origin;
 
 		hunk->line_count++;
 	}
+
+	if (oldlines || newlines) {
+		error = parse_err(
+			"invalid patch hunk, expected %d old lines and %d new lines",
+			hunk->hunk.old_lines, hunk->hunk.new_lines);
+		goto done;
+	}
+
+	/* Handle "\ No newline at end of file", which we identify by looking for
+	 * a string starting with "\ " that is a minimum of 12 chars.  That's the
+	 * shortest internationalized version of this string.  That we know about.
+	 * Yes.  Really.
+	 */
+	if (ctx->line_len >= 12 &&
+		memcmp(ctx->line, "\\ ", 2) == 0 &&
+		git_array_size(patch->lines) > 0) {
+
+		line = git_array_get(patch->lines, git_array_size(patch->lines)-1);
+
+		if (line->content_len < 1) {
+			error = parse_err("cannot trim trailing newline of empty line");
+			goto done;
+		}
+
+		line->content_len--;
+	}
+
+done:
+	return error;
+}
+
+static int parse_header_traditional(git_patch *patch, patch_parse_ctx *ctx)
+{
+	return 1;
+}
+
+static int parse_patch_header(
+	git_patch *patch,
+	patch_parse_ctx *ctx)
+{
+	int error = 0;
+
+	for (ctx->line = ctx->content; ctx->remain > 0; parse_advance_line(ctx)) {
+		/* This line is too short to be a patch header. */
+		if (ctx->line_len < 6)
+			continue;
+
+		/* This might be a hunk header without a patch header, provide a
+		 * sensible error message. */
+		if (memcmp(ctx->line, "@@ -", 4) == 0) {
+			size_t line_num = ctx->line_num;
+			diff_patch_hunk hunk;
+
+			/* If this cannot be parsed as a hunk header, it's just leading
+			 * noise, continue.
+			 */			
+			if (parse_hunk_header(patch, &hunk, ctx) < 0) {
+				giterr_clear();
+				continue;
+			}
+
+			error = parse_err("invalid hunk header outside patch at line %d",
+				line_num);
+			goto done;
+		}
+
+		/* This buffer is too short to contain a patch. */
+		if (ctx->remain < ctx->line_len + 6)
+			break;
+
+		/* A proper git patch */
+		if (ctx->line_len >= 11 && memcmp(ctx->line, "diff --git ", 11) == 0) {
+			if ((error = parse_header_git(patch, ctx)) < 0)
+				goto done;
+
+			/* For modechange only patches, it does not include filenames;
+			 * instead we need to use the paths in the diff --git header.
+			 */
+			if (!patch->ofile.file->path && !patch->nfile.file->path) {
+				if (!ctx->header_old_path || !ctx->header_new_path) {
+					error = parse_err("git diff header lacks old / new paths");
+					goto done;
+				}
+
+				patch->ofile.file->path = ctx->header_old_path;
+				ctx->header_old_path = NULL;
+
+				patch->nfile.file->path = ctx->header_new_path;
+				ctx->header_new_path = NULL;
+			}
+
+			goto done;
+		}
+
+		if ((error = parse_header_traditional(patch, ctx)) <= 0)
+			goto done;
+
+		error = 0;
+		continue;
+	}
+
+	error = parse_err("no header in patch file");
 
 done:
 	return error;
@@ -550,6 +686,8 @@ static int parse_patch_body(
 
 		hunk = git_array_alloc(patch->hunks);
 		GITERR_CHECK_ALLOC(hunk);
+
+		memset(hunk, 0, sizeof(diff_patch_hunk));
 
 		hunk->line_start = git_array_size(patch->lines);
 		hunk->line_count = 0;
