@@ -53,7 +53,9 @@ static int parse_advance_ws(patch_parse_ctx *ctx)
 {
 	int ret = -1;
 
-	while (ctx->line_len > 0 && isspace(ctx->line[0])) {
+	while (ctx->line_len > 0 &&
+		ctx->line[0] != '\n' &&
+		isspace(ctx->line[0])) {
 		ctx->line++;
 		ctx->line_len--;
 		ctx->remain--;
@@ -409,6 +411,7 @@ static int parse_header_git(
 				goto done;
 
 			parse_advance_ws(ctx);
+			parse_advance_expected(ctx, "\n", 1);
 
 			if (ctx->line_len > 0) {
 				error = parse_err("trailing data at line %d", ctx->line_num);

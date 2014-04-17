@@ -244,6 +244,13 @@ void test_apply_fromfile__fail_truncated_3(void)
 		strlen(PATCH_TRUNCATED_3)));
 }
 
+void test_apply_fromfile__fail_corrupt_githeader(void)
+{
+	git_patch *patch;
+	cl_git_fail(git_patch_from_patchfile(&patch, PATCH_CORRUPT_GIT_HEADER,
+		strlen(PATCH_CORRUPT_GIT_HEADER)));
+}
+
 void test_apply_fromfile__empty_context(void)
 {
 	cl_git_pass(apply_patchfile(FILE_EMPTY_CONTEXT_ORIGINAL,
@@ -256,4 +263,11 @@ void test_apply_fromfile__append_no_nl(void)
 	cl_git_pass(validate_and_apply_patchfile(
 		FILE_ORIGINAL, FILE_APPEND_NO_NL, PATCH_APPEND_NO_NL,
 		NULL, "b/file.txt", 0100644));
+}
+
+void test_apply_fromfile__fail_not_a_patch(void)
+{
+	git_patch *patch;
+	cl_git_fail(git_patch_from_patchfile(&patch, PATCH_NOT_A_PATCH,
+		strlen(PATCH_NOT_A_PATCH)));
 }
