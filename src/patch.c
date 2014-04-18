@@ -481,12 +481,13 @@ static int parse_hunk_header(
 
 	parse_advance_line(ctx);
 
+	if (!hunk->hunk.old_lines && !hunk->hunk.new_lines)
+		goto fail;
+
 	hunk->hunk.header_len = ctx->line - header_start;
-	if (hunk->hunk.header_len > (GIT_DIFF_HUNK_HEADER_SIZE - 1)) {
-		giterr_set(GITERR_PATCH, "Oversized patch hunk header at line %d",
+	if (hunk->hunk.header_len > (GIT_DIFF_HUNK_HEADER_SIZE - 1))
+		return parse_err("oversized patch hunk header at line %d",
 			ctx->line_num);
-		return -1;
-	}
 
 	memcpy(hunk->hunk.header, header_start, hunk->hunk.header_len);
 	hunk->hunk.header[hunk->hunk.header_len] = '\0';
@@ -544,16 +545,6 @@ static int parse_hunk_body(
 			newlines--;
 			break;
 
-		case '\\':
-			/* Handle "\ No newline"... */
-			if (ctx->line_len < 12 || memcmp(ctx->line, "\\ ", 2) != 0) {
-				error = parse_err("invalid patch hunk at line %d",
-					ctx->line_num);
-				goto done;
-			}
-
-			break;
-
 		default:
 			error = parse_err("invalid patch hunk at line %d", ctx->line_num);
 			goto done;
@@ -579,13 +570,12 @@ static int parse_hunk_body(
 		goto done;
 	}
 
-	/* Handle "\ No newline at end of file", which we identify by looking for
-	 * a string starting with "\ " that is a minimum of 12 chars.  That's the
-	 * shortest internationalized version of this string.  That we know about.
-	 * Yes.  Really.
+	/* Handle "\ No newline at end of file".  Only expect the leading
+	 * backslash, though, because the rest of the string could be
+	 * localized.  Because `diff` optimizes for the case where you
+	 * want to apply the patch by hand.
 	 */
-	if (ctx->line_len >= 12 &&
-		memcmp(ctx->line, "\\ ", 2) == 0 &&
+	if (ctx->line_len >= 2 && memcmp(ctx->line, "\\ ", 2) == 0 &&
 		git_array_size(patch->lines) > 0) {
 
 		line = git_array_get(patch->lines, git_array_size(patch->lines)-1);
@@ -596,6 +586,8 @@ static int parse_hunk_body(
 		}
 
 		line->content_len--;
+
+		parse_advance_line(ctx);
 	}
 
 done:
@@ -706,10 +698,21 @@ done:
 
 static int check_patch(git_patch *patch)
 {
+	if (!patch->ofile.file->path && patch->delta->status != GIT_DELTA_ADDED)
+		return parse_err("missing old file path");
+	
+	if (!patch->nfile.file->path && patch->delta->status != GIT_DELTA_DELETED)
+		return parse_err("missing new file path");
+	
 	if (patch->ofile.file->path && patch->nfile.file->path) {
 		if (!patch->nfile.file->mode)
 			patch->nfile.file->mode = patch->ofile.file->mode;
 	}
+
+	if (patch->delta->status == GIT_DELTA_MODIFIED &&
+		patch->nfile.file->mode == patch->ofile.file->mode &&
+		git_array_size(patch->hunks) == 0)
+		return parse_err("patch with no hunks");
 
 	return 0;
 }

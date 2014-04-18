@@ -265,6 +265,38 @@ void test_apply_fromfile__append_no_nl(void)
 		NULL, "b/file.txt", 0100644));
 }
 
+void test_apply_fromfile__fail_missing_new_file(void)
+{
+	git_patch *patch;
+	cl_git_fail(git_patch_from_patchfile(&patch,
+		PATCH_CORRUPT_MISSING_NEW_FILE,
+		strlen(PATCH_CORRUPT_MISSING_NEW_FILE)));
+}
+
+void test_apply_fromfile__fail_missing_old_file(void)
+{
+	git_patch *patch;
+	cl_git_fail(git_patch_from_patchfile(&patch,
+		PATCH_CORRUPT_MISSING_OLD_FILE,
+		strlen(PATCH_CORRUPT_MISSING_OLD_FILE)));
+}
+
+void test_apply_fromfile__fail_no_changes(void)
+{
+	git_patch *patch;
+	cl_git_fail(git_patch_from_patchfile(&patch,
+		PATCH_CORRUPT_NO_CHANGES,
+		strlen(PATCH_CORRUPT_NO_CHANGES)));
+}
+
+void test_apply_fromfile__fail_missing_hunk_header(void)
+{
+	git_patch *patch;
+	cl_git_fail(git_patch_from_patchfile(&patch,
+		PATCH_CORRUPT_MISSING_HUNK_HEADER,
+		strlen(PATCH_CORRUPT_MISSING_HUNK_HEADER)));
+}
+
 void test_apply_fromfile__fail_not_a_patch(void)
 {
 	git_patch *patch;

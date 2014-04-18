@@ -435,6 +435,37 @@
 	"@@ -0,0 +1 @@\n" \
 	"+insert at front\n"
 
+#define PATCH_CORRUPT_MISSING_NEW_FILE \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 9432026..cd8fd12 100644\n" \
+	"--- a/file.txt\n" \
+	"@@ -6 +6 @@ yes it is!\n" \
+	"-(this line is changed)\n" \
+	"+(THIS line is changed!)\n"
+
+#define PATCH_CORRUPT_MISSING_OLD_FILE \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 9432026..cd8fd12 100644\n" \
+	"+++ b/file.txt\n" \
+	"@@ -6 +6 @@ yes it is!\n" \
+	"-(this line is changed)\n" \
+	"+(THIS line is changed!)\n"
+
+#define PATCH_CORRUPT_NO_CHANGES \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 9432026..cd8fd12 100644\n" \
+	"--- a/file.txt\n" \
+	"+++ b/file.txt\n" \
+	"@@ -0,0 +0,0 @@ yes it is!\n"
+
+#define PATCH_CORRUPT_MISSING_HUNK_HEADER \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 9432026..cd8fd12 100644\n" \
+	"--- a/file.txt\n" \
+	"+++ b/file.txt\n" \
+	"-(this line is changed)\n" \
+	"+(THIS line is changed!)\n"
+
 #define PATCH_NOT_A_PATCH \
 	"+++this is not\n" \
 	"--actually even\n" \
