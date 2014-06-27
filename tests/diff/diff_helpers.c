@@ -68,9 +68,6 @@ int diff_file_cb(
 
 	e->files++;
 
-	if ((delta->flags & GIT_DIFF_FLAG_BINARY) != 0)
-		e->files_binary++;
-
 	cl_assert(delta->status <= GIT_DELTA_TYPECHANGE);
 
 	e->file_status[delta->status] += 1;
@@ -145,14 +142,38 @@ int diff_line_cb(
 	return 0;
 }
 
+int diff_binary_cb(
+	const git_diff_delta *delta,
+	const void *old_data,
+	size_t old_data_len,
+	const void *new_data,
+	size_t new_data_len,
+	void *payload)
+{
+	diff_expects *e = payload;
+
+	GIT_UNUSED(delta);
+	GIT_UNUSED(old_data);
+	GIT_UNUSED(old_data_len);
+	GIT_UNUSED(new_data);
+	GIT_UNUSED(new_data_len);
+
+	e->files_binary++;
+
+	return 0;
+}
+
 int diff_foreach_via_iterator(
 	git_diff *diff,
 	git_diff_file_cb file_cb,
 	git_diff_hunk_cb hunk_cb,
 	git_diff_line_cb line_cb,
+	git_diff_binary_cb binary_cb,
 	void *data)
 {
 	size_t d, num_d = git_diff_num_deltas(diff);
+
+	/* TODO: deal with the binary_cb */
 
 	for (d = 0; d < num_d; ++d) {
 		git_patch *patch;

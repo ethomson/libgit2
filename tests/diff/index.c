@@ -35,7 +35,7 @@ void test_diff_index__0(void)
 	cl_git_pass(git_diff_tree_to_index(&diff, g_repo, a, NULL, &opts));
 
 	cl_git_pass(git_diff_foreach(
-		diff, diff_file_cb, diff_hunk_cb, diff_line_cb, &exp));
+		diff, diff_file_cb, diff_hunk_cb, diff_line_cb, diff_binary_cb, &exp));
 
 	/* to generate these values:
 	 * - cd to tests/resources/status,
@@ -63,7 +63,7 @@ void test_diff_index__0(void)
 	cl_git_pass(git_diff_tree_to_index(&diff, g_repo, b, NULL, &opts));
 
 	cl_git_pass(git_diff_foreach(
-		diff, diff_file_cb, diff_hunk_cb, diff_line_cb, &exp));
+		diff, diff_file_cb, diff_hunk_cb, diff_line_cb, diff_binary_cb, &exp));
 
 	/* to generate these values:
 	 * - cd to tests/resources/status,
@@ -128,7 +128,7 @@ void test_diff_index__1(void)
 	cl_git_pass(git_diff_tree_to_index(&diff, g_repo, a, NULL, &opts));
 
 	cl_assert_equal_i(
-		1, git_diff_foreach(diff, diff_stop_after_2_files, NULL, NULL, &exp) );
+		1, git_diff_foreach(diff, diff_stop_after_2_files, NULL, NULL, NULL, &exp) );
 
 	cl_assert_equal_i(2, exp.files);
 

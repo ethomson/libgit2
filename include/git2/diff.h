@@ -488,6 +488,17 @@ typedef int (*git_diff_line_cb)(
 	void *payload);              /**< user reference data */
 
 /**
+ * When iterating over a diff, callback that will be made per binary file.
+ */
+typedef int (*git_diff_binary_cb)(
+	const git_diff_delta *delta, /**< delta that contains this data */
+	const void *old_data,        /**< contents of the old file */
+	size_t old_data_len,         /**< size of `old_data` */
+	const void *new_data,        /**< contents of the new file */
+	size_t new_data_len,         /**< size of `new_data` */
+	void *payload);              /**< user reference data */
+
+/**
  * Flags to control the behavior of diff rename/copy detection.
  */
 typedef enum {
@@ -891,6 +902,7 @@ GIT_EXTERN(int) git_diff_is_sorted_icase(const git_diff *diff);
  * @param line_cb Optional callback to make per line of diff text.  This
  *                same callback will be made for context lines, added, and
  *                removed lines, and even for a deleted trailing newline.
+ * @param binary_cb Optional callback to make for binary file diff contents.
  * @param payload Reference pointer that will be passed to your callbacks.
  * @return 0 on success, non-zero callback return value, or error code
  */
@@ -899,6 +911,7 @@ GIT_EXTERN(int) git_diff_foreach(
 	git_diff_file_cb file_cb,
 	git_diff_hunk_cb hunk_cb,
 	git_diff_line_cb line_cb,
+	git_diff_binary_cb binary_cb,
 	void *payload);
 
 /**
@@ -974,6 +987,7 @@ GIT_EXTERN(int) git_diff_print(
  * @param file_cb Callback for "file"; made once if there is a diff; can be NULL
  * @param hunk_cb Callback for each hunk in diff; can be NULL
  * @param line_cb Callback for each line in diff; can be NULL
+ * @param binary_cb Callback for binary file contents; can be NULL
  * @param payload Payload passed to each callback function
  * @return 0 on success, non-zero callback return value, or error code
  */
@@ -986,6 +1000,7 @@ GIT_EXTERN(int) git_diff_blobs(
 	git_diff_file_cb file_cb,
 	git_diff_hunk_cb hunk_cb,
 	git_diff_line_cb line_cb,
+	git_diff_binary_cb binary_cb,
 	void *payload);
 
 /**
@@ -1009,6 +1024,7 @@ GIT_EXTERN(int) git_diff_blobs(
  * @param file_cb Callback for "file"; made once if there is a diff; can be NULL
  * @param hunk_cb Callback for each hunk in diff; can be NULL
  * @param line_cb Callback for each line in diff; can be NULL
+ * @param binary_cb Callback for binary file contents; can be NULL
  * @param payload Payload passed to each callback function
  * @return 0 on success, non-zero callback return value, or error code
  */
@@ -1022,6 +1038,7 @@ GIT_EXTERN(int) git_diff_blob_to_buffer(
 	git_diff_file_cb file_cb,
 	git_diff_hunk_cb hunk_cb,
 	git_diff_line_cb line_cb,
+	git_diff_binary_cb binary_cb,
 	void *payload);
 
 /**
@@ -1041,6 +1058,7 @@ GIT_EXTERN(int) git_diff_blob_to_buffer(
  * @param file_cb Callback for "file"; made once if there is a diff; can be NULL
  * @param hunk_cb Callback for each hunk in diff; can be NULL
  * @param line_cb Callback for each line in diff; can be NULL
+ * @param binary_cb Callback for binary file contents; can be NULL
  * @param payload Payload passed to each callback function
  * @return 0 on success, non-zero callback return value, or error code
  */
@@ -1055,6 +1073,7 @@ GIT_EXTERN(int) git_diff_buffers(
 	git_diff_file_cb file_cb,
 	git_diff_hunk_cb hunk_cb,
 	git_diff_line_cb line_cb,
+	git_diff_binary_cb binary_cb,
 	void *payload);
 
 /**

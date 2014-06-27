@@ -13,6 +13,36 @@
 #include "array.h"
 #include "git2/patch.h"
 
+/* cached information about a hunk in a diff */
+
+typedef struct {
+	git_diff_hunk hunk;
+	size_t line_start;
+	size_t line_count;
+} diff_patch_hunk;
+
+typedef struct {
+	const void *old_data;
+	size_t old_data_len;
+	const void *new_data;
+	size_t new_data_len;
+} diff_patch_binary;
+
+struct git_patch {
+	git_refcount rc;
+	git_diff *diff; /* for refcount purposes, maybe NULL for blob diffs */
+	git_diff_delta *delta;
+	size_t delta_index;
+	git_diff_file_content ofile;
+	git_diff_file_content nfile;
+	uint32_t flags;
+	git_array_t(diff_patch_hunk) hunks;
+	git_array_t(git_diff_line)   lines;
+	diff_patch_binary binary;
+	size_t content_size, context_size, header_size;
+	git_pool flattened;
+};
+
 extern git_diff *git_patch__diff(git_patch *);
 
 extern git_diff_driver *git_patch__driver(git_patch *);
@@ -25,6 +55,7 @@ extern int git_patch__invoke_callbacks(
 	git_diff_file_cb file_cb,
 	git_diff_hunk_cb hunk_cb,
 	git_diff_line_cb line_cb,
+	git_diff_binary_cb binary_cb,
 	void *payload);
 
 typedef struct git_diff_output git_diff_output;
@@ -33,13 +64,14 @@ struct git_diff_output {
 	git_diff_file_cb file_cb;
 	git_diff_hunk_cb hunk_cb;
 	git_diff_line_cb data_cb;
+	git_diff_binary_cb binary_cb;
 	void *payload;
 
 	/* this records the actual error in cases where it may be obscured */
 	int error;
 
-	/* this callback is used to do the diff and drive the other callbacks.
-	 * see diff_xdiff.h for how to use this in practice for now.
+	/* this callback is used to do the diff and drive the hunk and data
+	 * callbacks.  see diff_xdiff.h for how to use this in practice for now.
 	 */
 	int (*diff_cb)(git_diff_output *output, git_patch *patch);
 };

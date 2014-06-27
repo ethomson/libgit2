@@ -53,11 +53,20 @@ extern int diff_line_cb(
 	const git_diff_line *line,
 	void *cb_data);
 
+extern int diff_binary_cb(
+	const git_diff_delta *delta,
+	const void *old_data,
+	size_t old_data_len,
+	const void *new_data,
+	size_t new_data_len,
+	void *cb_data);
+
 extern int diff_foreach_via_iterator(
 	git_diff *diff,
 	git_diff_file_cb file_cb,
 	git_diff_hunk_cb hunk_cb,
 	git_diff_line_cb line_cb,
+	git_diff_binary_cb binary_cb,
 	void *data);
 
 extern void diff_print(FILE *fp, git_diff *diff);

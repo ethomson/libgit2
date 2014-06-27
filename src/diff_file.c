@@ -235,7 +235,8 @@ static int diff_file_content_load_blob(git_diff_file_content *fc)
 			return error;
 	}
 
-	if (diff_file_content_binary_by_size(fc))
+	if (diff_file_content_binary_by_size(fc) &&
+		(fc->opts_flags & GIT_DIFF_SHOW_BINARY) == 0)		
 		return 0;
 
 	if (odb_obj != NULL) {
@@ -296,7 +297,8 @@ static int diff_file_content_load_workdir_file(
 		!(fc->file->size = git_futils_filesize(fd)))
 		goto cleanup;
 
-	if (diff_file_content_binary_by_size(fc))
+	if (diff_file_content_binary_by_size(fc) &&
+		(fc->opts_flags & GIT_DIFF_SHOW_BINARY) == 0)
 		goto cleanup;
 
 	if ((error = git_filter_list_load(
@@ -376,7 +378,8 @@ int git_diff_file_content__load(git_diff_file_content *fc)
 	if ((fc->flags & GIT_DIFF_FLAG__LOADED) != 0)
 		return 0;
 
-	if ((fc->file->flags & GIT_DIFF_FLAG_BINARY) != 0)
+	if ((fc->opts_flags & GIT_DIFF_SHOW_BINARY) == 0 &&
+		(fc->file->flags & GIT_DIFF_FLAG_BINARY) != 0)
 		return 0;
 
 	if (fc->src == GIT_ITERATOR_TYPE_WORKDIR)
