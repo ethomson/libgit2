@@ -1,0 +1,23 @@
+From a2a1865a0f5443d23b6c8eb5950bcafd8afe1886 Mon Sep 17 00:00:00 2001
+From: Edward Thomson <ethomson@edwardthomson.com>
+Date: Mon, 30 Jun 2014 15:42:45 -0400
+Subject: file1
+
+---
+ file1.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/file1.txt b/file1.txt
+index e656c83a1fc48e87723103b38b68314bfd1780bb..46201d70921a8b4d7fc1480789876f89e42489cd 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -1,4 +1,4 @@
+-This is file 1.
++This is file 1 and a change that will conflict with master.
+ This is file 1.
+ This is file 1.
+ This is file 1.
+-- 
+1.8.5.2 (Apple Git-48)
+
+

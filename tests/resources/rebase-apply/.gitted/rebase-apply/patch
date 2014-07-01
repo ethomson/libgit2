@@ -1,0 +1,11 @@
+a2a1865a0f5443d23b6c8eb5950bcafd8afe1886
+diff --git a/file1.txt b/file1.txt
+index e656c83a1fc48e87723103b38b68314bfd1780bb..46201d70921a8b4d7fc1480789876f89e42489cd 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -1,4 +1,4 @@
+-This is file 1.
++This is file 1 and a change that will conflict with master.
+ This is file 1.
+ This is file 1.
+ This is file 1.

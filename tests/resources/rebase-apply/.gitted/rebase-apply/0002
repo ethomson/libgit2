@@ -1,0 +1,31 @@
+From 00783e2307458bb15a11595126704e037e31aee1 Mon Sep 17 00:00:00 2001
+From: Edward Thomson <ethomson@edwardthomson.com>
+Date: Mon, 30 Jun 2014 15:43:19 -0400
+Subject: Updates to branch
+
+---
+ file-branch.txt | 1 +
+ file2.txt       | 2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+ create mode 100644 file-branch.txt
+
+diff --git a/file-branch.txt b/file-branch.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..dcd502d26bde8444ae744e81ad80f83dbd08f159
+--- /dev/null
++++ b/file-branch.txt
+@@ -0,0 +1 @@
++This file is new in 'branch'
+diff --git a/file2.txt b/file2.txt
+index 8b03de7642abe59a3f458ed2593357ee6427c69f..5560725e9e83b0a9e1ec4c1712742f5b59689242 100644
+--- a/file2.txt
++++ b/file2.txt
+@@ -2,4 +2,4 @@ This is file two.
+ This is file two.
+ This is file two.
+ This is file two.
+-This is file two.
++This is file two, with automergeable changes.
+-- 
+1.8.5.2 (Apple Git-48)
+

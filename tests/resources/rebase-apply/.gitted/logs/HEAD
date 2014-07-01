@@ -1,0 +1,10 @@
+0000000000000000000000000000000000000000 c8fd7efa07771c06cf938d88d2ee240d83105abf Edward Thomson <ethomson@edwardthomson.com> 1404157341 -0400	commit (initial): Initial revision
+c8fd7efa07771c06cf938d88d2ee240d83105abf c8fd7efa07771c06cf938d88d2ee240d83105abf Edward Thomson <ethomson@edwardthomson.com> 1404157344 -0400	checkout: moving from master to branch
+c8fd7efa07771c06cf938d88d2ee240d83105abf a2a1865a0f5443d23b6c8eb5950bcafd8afe1886 Edward Thomson <ethomson@edwardthomson.com> 1404157365 -0400	commit: file1
+a2a1865a0f5443d23b6c8eb5950bcafd8afe1886 00783e2307458bb15a11595126704e037e31aee1 Edward Thomson <ethomson@edwardthomson.com> 1404157399 -0400	commit: Updates to branch
+00783e2307458bb15a11595126704e037e31aee1 c8fd7efa07771c06cf938d88d2ee240d83105abf Edward Thomson <ethomson@edwardthomson.com> 1404157400 -0400	checkout: moving from branch to master
+c8fd7efa07771c06cf938d88d2ee240d83105abf 4c6e3b088cec89aafdde1f120ccdc631faec0857 Edward Thomson <ethomson@edwardthomson.com> 1404157445 -0400	commit: Conflicting change
+4c6e3b088cec89aafdde1f120ccdc631faec0857 8f2e7a748693eb7af7965f2012919ebe2be942ef Edward Thomson <ethomson@edwardthomson.com> 1404157452 -0400	commit: File 2
+8f2e7a748693eb7af7965f2012919ebe2be942ef 4dfd451f933e4cb1ca2338b9fffebada97f7b2cc Edward Thomson <ethomson@edwardthomson.com> 1404157474 -0400	commit: File added in master
+4dfd451f933e4cb1ca2338b9fffebada97f7b2cc 00783e2307458bb15a11595126704e037e31aee1 Edward Thomson <ethomson@edwardthomson.com> 1404157490 -0400	checkout: moving from master to branch
+00783e2307458bb15a11595126704e037e31aee1 4dfd451f933e4cb1ca2338b9fffebada97f7b2cc Edward Thomson <ethomson@edwardthomson.com> 1404157492 -0400	rebase: checkout master

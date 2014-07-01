@@ -1,0 +1,9 @@
+<<<<<<< master
+This is file 1, with a change conflicting with 'branch'.
+=======
+This is file 1 and a change that will conflict with master.
+>>>>>>> HEAD~1
+This is file 1.
+This is file 1.
+This is file 1.
+This is file 1.

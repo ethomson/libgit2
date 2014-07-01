@@ -1,0 +1,5 @@
+This is file two, a change in 'master' that can be automerged.
+This is file two.
+This is file two.
+This is file two.
+This is file two.
