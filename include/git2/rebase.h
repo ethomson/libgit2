@@ -20,6 +20,26 @@
  */
 GIT_BEGIN_DECL
 
+typedef struct {
+	int quiet;
+} git_rebase_options;
+
+/**
+ * Sets up a rebase operation to rebase the changes in ours relative to
+ * upstream onto another branch.
+ *
+ * @param repo The repository to perform the rebase
+ * @param ours The terminal commit to rebase
+ * @param upstream The commit to begin rebasing from
+ * @param onto The branch to rebase onto
+ */
+GIT_EXTERN(int) git_rebase(
+	git_repository *repo,
+	const git_merge_head *ours,
+	const git_merge_head *upstream,
+	const git_merge_head *onto,
+	const git_rebase_options *opts);
+
 /**
  * Aborts a rebase that is currently in progress, resetting the repository
  * and working directory to their state before rebase began.
