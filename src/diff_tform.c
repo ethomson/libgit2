@@ -836,9 +836,6 @@ int git_diff_find_similar(
 	if ((opts.flags & GIT_DIFF_FIND_ALL) == 0)
 		goto cleanup;
 
-	sigcache = git__calloc(num_deltas * 2, sizeof(void *));
-	GITERR_CHECK_ALLOC(sigcache);
-
 	/* Label rename sources and targets
 	 *
 	 * This will also set self-similarity scores for MODIFIED files and
@@ -858,6 +855,9 @@ int git_diff_find_similar(
 	/* if there are no candidate srcs or tgts, we're done */
 	if (!num_srcs || !num_tgts)
 		goto cleanup;
+
+	sigcache = git__calloc(num_deltas * 2, sizeof(void *));
+	GITERR_CHECK_ALLOC(sigcache);
 
 	src2tgt = git__calloc(num_deltas, sizeof(diff_find_match));
 	GITERR_CHECK_ALLOC(src2tgt);
