@@ -592,67 +592,68 @@ static int filter_list_out_buffer_from_raw(
 	return 0;
 }
 
-int git_filter_list_apply_to_data(
-	git_buf *tgt, git_filter_list *fl, git_buf *src)
+struct buf_stream {
+	git_filter_stream base;
+	git_buf *target;
+	bool complete;
+};
+
+static int buf_stream_write(
+	git_filter_stream *s, const char *buffer, size_t len)
 {
-	int error = 0;
-	uint32_t i;
-	git_buf *dbuffer[2], local = GIT_BUF_INIT;
-	unsigned int si = 0;
+	struct buf_stream *buf_stream = (struct buf_stream *)s;
+	assert(buf_stream);
+
+	assert(buf_stream->complete == 0);
+
+	return git_buf_put(buf_stream->target, buffer, len);
+}
+
+static int buf_stream_close(git_filter_stream *s)
+{
+	struct buf_stream *buf_stream = (struct buf_stream *)s;
+	assert(buf_stream);
+
+	assert(buf_stream->complete == 0);
+	buf_stream->complete = 1;
+
+	return 0;
+}
+
+static void buf_stream_free(git_filter_stream *s)
+{
+}
+
+static void buf_stream_init(struct buf_stream *writer, git_buf *target)
+{
+	memset(writer, 0, sizeof(struct buf_stream));
+
+	writer->base.write = buf_stream_write;
+	writer->base.close = buf_stream_close;
+	writer->base.free = buf_stream_free;
+	writer->target = target;
+
+	git_buf_clear(target);
+}
+
+int git_filter_list_apply_to_data(
+	git_buf *tgt, git_filter_list *filters, git_buf *src)
+{
+	struct buf_stream writer;
+	int error;
 
 	git_buf_sanitize(tgt);
 	git_buf_sanitize(src);
 
-	if (!fl)
+	if (!filters)
 		return filter_list_out_buffer_from_raw(tgt, src->ptr, src->size);
 
-	dbuffer[0] = src;
-	dbuffer[1] = tgt;
+	buf_stream_init(&writer, tgt);
 
-	/* if `src` buffer is reallocable, then use it, otherwise copy it */
-	if (!git_buf_is_allocated(src)) {
-		if (git_buf_set(&local, src->ptr, src->size) < 0)
-			return -1;
-		dbuffer[0] = &local;
-	}
+	if ((error = git_filter_list_stream_data(filters, src, &writer)) < 0)
+		return error;
 
-	for (i = 0; i < git_array_size(fl->filters); ++i) {
-		unsigned int di = 1 - si;
-		uint32_t fidx = (fl->source.mode == GIT_FILTER_TO_WORKTREE) ?
-			i : git_array_size(fl->filters) - 1 - i;
-		git_filter_entry *fe = git_array_get(fl->filters, fidx);
-
-		dbuffer[di]->size = 0;
-
-		/* Apply the filter from dbuffer[src] to the other buffer;
-		 * if the filtering is canceled by the user mid-filter,
-		 * we skip to the next filter without changing the source
-		 * of the double buffering (so that the text goes through
-		 * cleanly).
-		 */
-
-		error = fe->filter->apply(
-			fe->filter, &fe->payload, dbuffer[di], dbuffer[si], &fl->source);
-
-		if (error == GIT_PASSTHROUGH) {
-			/* PASSTHROUGH means filter decided not to process the buffer */
-			error = 0;
-		} else if (!error) {
-			git_buf_sanitize(dbuffer[di]); /* force NUL termination */
-			si = di; /* swap buffers */
-		} else {
-			tgt->size = 0;
-			goto cleanup;
-		}
-	}
-
-	/* Ensure that the output ends up in dbuffer[1] (i.e. the dest) */
-	if (si != 1)
-		git_buf_swap(dbuffer[0], dbuffer[1]);
-
-cleanup:
-	git_buf_free(&local); /* don't leak if we allocated locally */
-
+	assert(writer.complete);
 	return error;
 }
 
@@ -662,19 +663,15 @@ int git_filter_list_apply_to_file(
 	git_repository *repo,
 	const char *path)
 {
+	struct buf_stream writer;
 	int error;
-	const char *base = repo ? git_repository_workdir(repo) : NULL;
-	git_buf abspath = GIT_BUF_INIT, raw = GIT_BUF_INIT;
 
-	if (!(error = git_path_join_unrooted(&abspath, path, base, NULL)) &&
-		!(error = git_futils_readbuffer(&raw, abspath.ptr)))
-	{
-		error = git_filter_list_apply_to_data(out, filters, &raw);
+	buf_stream_init(&writer, out);
 
-		git_buf_free(&raw);
-	}
+	if ((error = git_filter_list_stream_file(filters, repo, path, &writer)) < 0)
+		return error;
 
-	git_buf_free(&abspath);
+	assert(writer.complete);
 	return error;
 }
 
@@ -699,15 +696,16 @@ int git_filter_list_apply_to_blob(
 	git_filter_list *filters,
 	git_blob *blob)
 {
-	git_buf in = GIT_BUF_INIT;
+	struct buf_stream writer;
+	int error;
 
-	if (buf_from_blob(&in, blob) < 0)
-		return -1;
+	buf_stream_init(&writer, out);
 
-	if (filters)
-		git_oid_cpy(&filters->source.oid, git_blob_id(blob));
+	if ((error = git_filter_list_stream_blob(filters, blob, &writer)) < 0)
+		return error;
 
-	return git_filter_list_apply_to_data(out, filters, &in);
+	assert(writer.complete);
+	return error;
 }
 
 struct proxy_stream {
@@ -849,7 +847,6 @@ void stream_list_free(git_vector *streams)
 /* TODO: maybe not use filter_stream as a target but create one */
 int git_filter_list_stream_file(
 	git_filter_list *filters,
-	git_buf *data,
 	git_repository *repo,
 	const char *path,
 	git_filter_stream *target)
@@ -873,7 +870,7 @@ int git_filter_list_stream_file(
 	}
 
 	while ((readlen = p_read(fd, buf, STREAM_BUFSIZE)) > 0) {
-		if ((error = stream_start->write(stream_start, data->ptr, data->size)) < 0)
+		if ((error = stream_start->write(stream_start, buf, readlen)) < 0)
 			goto done;
 	}
 
@@ -898,6 +895,8 @@ int git_filter_list_stream_data(
 	git_vector filter_streams = GIT_VECTOR_INIT;
 	git_filter_stream *stream_start;
 	int error = 0;
+
+	git_buf_sanitize(data);
 
 	if ((error = stream_list_init(
 			&stream_start, &filter_streams, filters, target)) == 0 &&
