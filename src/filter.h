@@ -23,6 +23,9 @@ typedef enum {
 	GIT_CRLF_AUTO,
 } git_crlf_t;
 
+extern void git_filter_list__set_temp_buf(
+	git_filter_list *fl, git_buf *temp_buf);
+
 extern void git_filter_free(git_filter *filter);
 
 /*

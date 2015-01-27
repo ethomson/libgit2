@@ -1403,6 +1403,7 @@ static int checkout_stream_close(git_filter_stream *s)
 
 static void checkout_stream_free(git_filter_stream *s)
 {
+	GIT_UNUSED(s);
 }
 
 static int blob_content_to_file(
@@ -1416,9 +1417,8 @@ static int blob_content_to_file(
 	int flags = data->opts.file_open_flags;
 	mode_t file_mode = data->opts.file_mode ?
 		data->opts.file_mode : entry_filemode;
-	struct checkout_stream writer = {0};
+	struct checkout_stream writer;
 	mode_t mode;
-	git_buf out = GIT_BUF_INIT;
 	git_filter_list *fl = NULL;
 	int fd;
 	int error = 0;
@@ -1445,7 +1445,11 @@ static int blob_content_to_file(
 			GIT_FILTER_TO_WORKTREE, GIT_FILTER_OPT_DEFAULT)) < 0)
 		return error;
 
+	if (fl)
+		git_filter_list__set_temp_buf(fl, &data->tmp);
+
 	/* setup the writer */
+	memset(&writer, 0, sizeof(struct checkout_stream));
 	writer.base.write = checkout_stream_write;
 	writer.base.close = checkout_stream_close;
 	writer.base.free = checkout_stream_free;
@@ -1453,7 +1457,7 @@ static int blob_content_to_file(
 	writer.fd = fd;
 	writer.open = 1;
 
-	error = git_filter_list_stream_blob(fl, blob, &writer);
+	error = git_filter_list_stream_blob(fl, blob, (git_filter_stream *)&writer);
 
 	assert(writer.open == 0);
 
@@ -2254,6 +2258,7 @@ static void checkout_data_clear(checkout_data *data)
 	git__free(data->pfx);
 	data->pfx = NULL;
 
+	git_buf_free(&data->last_mkdir);
 	git_buf_free(&data->path);
 	git_buf_free(&data->tmp);
 
