@@ -19,6 +19,7 @@
 #include "git2/sys/index.h"
 #include "git2/sys/filter.h"
 
+#include "attr.h"
 #include "refs.h"
 #include "repository.h"
 #include "index.h"
@@ -70,6 +71,7 @@ typedef struct {
 	size_t completed_steps;
 	git_checkout_perfdata perfdata;
 	git_buf last_mkdir;
+	git_attrreader attrreader;
 } checkout_data;
 
 typedef struct {
@@ -1440,8 +1442,8 @@ static int blob_content_to_file(
 	}
 
 	if (!data->opts.disable_filters &&
-		(error = git_filter_list_load(
-			&fl, git_blob_owner(blob), blob, hint_path,
+		(error = git_filter_list_load_from_attrreader(
+			&fl, &data->attrreader, blob, hint_path,
 			GIT_FILTER_TO_WORKTREE, GIT_FILTER_OPT_DEFAULT)) < 0)
 		return error;
 
@@ -2264,6 +2266,8 @@ static void checkout_data_clear(checkout_data *data)
 
 	git_index_free(data->index);
 	data->index = NULL;
+
+	git_attrreader_free(&data->attrreader);
 }
 
 static int checkout_data_init(
@@ -2402,6 +2406,9 @@ static int checkout_data_init(
 		(error = git_pool_init(&data->pool, 1, 0)) < 0 ||
 		(error = git_buf_puts(&data->path, data->opts.target_directory)) < 0 ||
 		(error = git_path_to_dir(&data->path)) < 0)
+		goto cleanup;
+
+	if ((error = git_attrreader_init(&data->attrreader, repo)) < 0)
 		goto cleanup;
 
 	data->workdir_len = git_buf_len(&data->path);

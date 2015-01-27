@@ -14,6 +14,7 @@
 #include "git2/sys/filter.h"
 #include "git2/config.h"
 #include "blob.h"
+#include "attr.h"
 #include "attr_file.h"
 #include "array.h"
 
@@ -396,15 +397,18 @@ static int filter_list_new(
 }
 
 static int filter_list_check_attributes(
-	const char ***out, git_filter_def *fdef, const git_filter_source *src)
+	const char ***out,
+	git_filter_def *fdef,
+	const git_filter_source *src,
+	git_attrreader *reader)
 {
 	int error;
 	size_t i;
 	const char **strs = git__calloc(fdef->nattrs, sizeof(const char *));
 	GITERR_CHECK_ALLOC(strs);
 
-	error = git_attr_get_many(
-		strs, src->repo, 0, src->path, fdef->nattrs, fdef->attrs);
+	error = git_attrreader_get_many(
+		strs, reader, 0, src->path, fdef->nattrs, fdef->attrs);
 
 	/* if no values were found but no matches are needed, it's okay! */
 	if (error == GIT_ENOTFOUND && !fdef->nmatches) {
@@ -450,9 +454,9 @@ int git_filter_list_new(
 	return filter_list_new(out, &src);
 }
 
-int git_filter_list_load(
+int git_filter_list_load_from_attrreader(
 	git_filter_list **filters,
-	git_repository *repo,
+	git_attrreader *attrreader,
 	git_blob *blob, /* can be NULL */
 	const char *path,
 	git_filter_mode_t mode,
@@ -468,7 +472,7 @@ int git_filter_list_load(
 	if (filter_registry_initialize() < 0)
 		return -1;
 
-	src.repo = repo;
+	src.repo = attrreader->repo;
 	src.path = path;
 	src.mode = mode;
 	src.options = options;
@@ -483,7 +487,7 @@ int git_filter_list_load(
 			continue;
 
 		if (fdef->nattrs > 0) {
-			error = filter_list_check_attributes(&values, fdef, &src);
+			error = filter_list_check_attributes(&values, fdef, &src, attrreader);
 			if (error == GIT_ENOTFOUND) {
 				error = 0;
 				continue;
@@ -523,6 +527,27 @@ int git_filter_list_load(
 	}
 
 	*filters = fl;
+	return error;
+}
+
+int git_filter_list_load(
+	git_filter_list **filters,
+	git_repository *repo,
+	git_blob *blob, /* can be NULL */
+	const char *path,
+	git_filter_mode_t mode,
+	uint32_t options)
+{
+	git_attrreader attrreader = {0};
+	int error;
+
+	assert(filters && repo);
+
+	if ((error = git_attrreader_init(&attrreader, repo)) == 0)
+		error = git_filter_list_load_from_attrreader(
+			filters, &attrreader, blob, path, mode, options);
+
+	git_attrreader_free(&attrreader);
 	return error;
 }
 

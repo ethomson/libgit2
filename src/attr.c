@@ -2,6 +2,7 @@
 #include "repository.h"
 #include "sysdir.h"
 #include "config.h"
+#include "attr.h"
 #include "attr_file.h"
 #include "ignore.h"
 #include "git2/oid.h"
@@ -27,14 +28,6 @@ git_attr_t git_attr_value(const char *attr)
 	return GIT_ATTR_VALUE_T;
 }
 
-static int collect_attr_files(
-	git_repository *repo,
-	uint32_t flags,
-	const char *path,
-	git_vector *files);
-
-static void release_attr_files(git_vector *files);
-
 int git_attr_get(
 	const char **value,
 	git_repository *repo,
@@ -43,8 +36,9 @@ int git_attr_get(
 	const char *name)
 {
 	int error;
+	git_attrreader reader = {0};
 	git_attr_path path;
-	git_vector files = GIT_VECTOR_INIT;
+	git_vector *files;
 	size_t i, j;
 	git_attr_file *file;
 	git_attr_name attr;
@@ -57,14 +51,15 @@ int git_attr_get(
 	if (git_attr_path__init(&path, pathname, git_repository_workdir(repo)) < 0)
 		return -1;
 
-	if ((error = collect_attr_files(repo, flags, pathname, &files)) < 0)
+	if ((error = git_attrreader_init(&reader, repo)) < 0 ||
+		(error = git_attrreader_files(&files, &reader, pathname, flags)) < 0)
 		goto cleanup;
 
 	memset(&attr, 0, sizeof(attr));
 	attr.name = name;
 	attr.name_hash = git_attr_file__name_hash(name);
 
-	git_vector_foreach(&files, i, file) {
+	git_vector_foreach(files, i, file) {
 
 		git_attr_file__foreach_matching_rule(file, &path, j, rule) {
 			size_t pos;
@@ -78,12 +73,11 @@ int git_attr_get(
 	}
 
 cleanup:
-	release_attr_files(&files);
+	git_attrreader_free(&reader);
 	git_attr_path__free(&path);
 
 	return error;
 }
-
 
 typedef struct {
 	git_attr_name name;
@@ -98,66 +92,22 @@ int git_attr_get_many(
 	size_t num_attr,
 	const char **names)
 {
+	git_attrreader reader = {0};
 	int error;
-	git_attr_path path;
-	git_vector files = GIT_VECTOR_INIT;
-	size_t i, j, k;
-	git_attr_file *file;
-	git_attr_rule *rule;
-	attr_get_many_info *info = NULL;
-	size_t num_found = 0;
 
 	if (!num_attr)
 		return 0;
 
 	assert(values && repo && names);
 
-	if (git_attr_path__init(&path, pathname, git_repository_workdir(repo)) < 0)
-		return -1;
-
-	if ((error = collect_attr_files(repo, flags, pathname, &files)) < 0)
+	if ((error = git_attrreader_init(&reader, repo)) < 0)
 		goto cleanup;
 
-	info = git__calloc(num_attr, sizeof(attr_get_many_info));
-	GITERR_CHECK_ALLOC(info);
-
-	git_vector_foreach(&files, i, file) {
-
-		git_attr_file__foreach_matching_rule(file, &path, j, rule) {
-
-			for (k = 0; k < num_attr; k++) {
-				size_t pos;
-
-				if (info[k].found != NULL) /* already found assignment */
-					continue;
-
-				if (!info[k].name.name) {
-					info[k].name.name = names[k];
-					info[k].name.name_hash = git_attr_file__name_hash(names[k]);
-				}
-
-				if (!git_vector_bsearch(&pos, &rule->assigns, &info[k].name)) {
-					info[k].found = (git_attr_assignment *)
-						git_vector_get(&rule->assigns, pos);
-					values[k] = info[k].found->value;
-
-					if (++num_found == num_attr)
-						goto cleanup;
-				}
-			}
-		}
-	}
-
-	for (k = 0; k < num_attr; k++) {
-		if (!info[k].found)
-			values[k] = NULL;
-	}
+	error = git_attrreader_get_many(
+		values, &reader, flags, pathname, num_attr, names);
 
 cleanup:
-	release_attr_files(&files);
-	git_attr_path__free(&path);
-	git__free(info);
-
+	git_attrreader_free(&reader);
 	return error;
 }
 
@@ -170,8 +120,9 @@ int git_attr_foreach(
 	void *payload)
 {
 	int error;
+	git_attrreader reader = {0};
 	git_attr_path path;
-	git_vector files = GIT_VECTOR_INIT;
+	git_vector *files;
 	size_t i, j, k;
 	git_attr_file *file;
 	git_attr_rule *rule;
@@ -183,11 +134,12 @@ int git_attr_foreach(
 	if (git_attr_path__init(&path, pathname, git_repository_workdir(repo)) < 0)
 		return -1;
 
-	if ((error = collect_attr_files(repo, flags, pathname, &files)) < 0 ||
+	if ((error = git_attrreader_init(&reader, repo)) < 0 ||
+		(error = git_attrreader_files(&files, &reader, pathname, flags)) < 0 ||
 		(error = git_strmap_alloc(&seen)) < 0)
 		goto cleanup;
 
-	git_vector_foreach(&files, i, file) {
+	git_vector_foreach(files, i, file) {
 
 		git_attr_file__foreach_matching_rule(file, &path, j, rule) {
 
@@ -211,7 +163,7 @@ int git_attr_foreach(
 
 cleanup:
 	git_strmap_free(seen);
-	release_attr_files(&files);
+	git_attrreader_free(&reader);
 	git_attr_path__free(&path);
 
 	return error;
@@ -393,31 +345,47 @@ static int push_one_attr(void *ref, const char *path)
 	return error;
 }
 
-static void release_attr_files(git_vector *files)
-{
-	size_t i;
-	git_attr_file *file;
 
-	git_vector_foreach(files, i, file) {
-		git_attr_file__free(file);
-		files->contents[i] = NULL;
-	}
-	git_vector_free(files);
-}
-
-static int collect_attr_files(
-	git_repository *repo,
-	uint32_t flags,
-	const char *path,
-	git_vector *files)
+int git_attrreader_init(git_attrreader *out, git_repository *repo)
 {
-	int error = 0;
-	git_buf dir = GIT_BUF_INIT;
-	const char *workdir = git_repository_workdir(repo);
-	attr_walk_up_info info = { NULL };
+	int error;
+
+	memset(out, 0, sizeof(git_attrreader));
 
 	if ((error = attr_setup(repo)) < 0)
 		return error;
+
+	out->repo = repo;
+
+	return 0;
+}
+
+static void git_attrreader_clear(git_attrreader *reader)
+{
+	git_attr_file *file;
+	size_t i;
+
+	git_vector_foreach(&reader->files, i, file) {
+		git_attr_file__free(file);
+		reader->files.contents[i] = NULL;
+	}
+
+	git_vector_clear(&reader->files);
+}
+
+int git_attrreader_files(
+	git_vector **out,
+	git_attrreader *reader,
+	const char *path,
+	uint32_t flags)
+{
+	git_repository *repo = reader->repo;
+	const char *workdir = git_repository_workdir(repo);
+	git_buf dir = GIT_BUF_INIT;
+	attr_walk_up_info info = { NULL };
+	int error = 0;
+
+	*out = NULL;
 
 	/* Resolve path in a non-bare repo */
 	if (workdir != NULL)
@@ -427,6 +395,19 @@ static int collect_attr_files(
 	if (error < 0)
 		goto cleanup;
 
+	/* If we're queried for the same path again, no work to do. */
+	if (reader->last_path.size &&
+		strcmp(reader->last_path.ptr, dir.ptr) == 0 &&
+		reader->last_flags == flags) {
+		*out = &reader->files;
+		return 0;
+	}
+
+	git_attrreader_clear(reader);
+
+	git_buf_set(&reader->last_path, dir.ptr, dir.size);
+	reader->last_flags = flags;
+
 	/* in precendence order highest to lowest:
 	 * - $GIT_DIR/info/attributes
 	 * - path components with .gitattributes
@@ -435,7 +416,7 @@ static int collect_attr_files(
 	 */
 
 	error = push_attr_file(
-		repo, files, GIT_ATTR_FILE__FROM_FILE,
+		reader->repo, &reader->files, GIT_ATTR_FILE__FROM_FILE,
 		git_repository_path(repo), GIT_ATTR_FILE_INREPO);
 	if (error < 0)
 		goto cleanup;
@@ -445,7 +426,7 @@ static int collect_attr_files(
 	info.workdir = workdir;
 	if (git_repository_index__weakptr(&info.index, repo) < 0)
 		giterr_clear(); /* no error even if there is no index */
-	info.files = files;
+	info.files = &reader->files;
 
 	if (!strcmp(dir.ptr, "."))
 		error = push_one_attr(&info, "");
@@ -457,7 +438,7 @@ static int collect_attr_files(
 
 	if (git_repository_attr_cache(repo)->cfg_attr_file != NULL) {
 		error = push_attr_file(
-			repo, files, GIT_ATTR_FILE__FROM_FILE,
+			repo, &reader->files, GIT_ATTR_FILE__FROM_FILE,
 			NULL, git_repository_attr_cache(repo)->cfg_attr_file);
 		if (error < 0)
 			goto cleanup;
@@ -467,17 +448,92 @@ static int collect_attr_files(
 		error = git_sysdir_find_system_file(&dir, GIT_ATTR_FILE_SYSTEM);
 		if (!error)
 			error = push_attr_file(
-				repo, files, GIT_ATTR_FILE__FROM_FILE, NULL, dir.ptr);
+				repo, &reader->files, GIT_ATTR_FILE__FROM_FILE, NULL, dir.ptr);
 		else if (error == GIT_ENOTFOUND) {
 			giterr_clear();
 			error = 0;
 		}
 	}
 
- cleanup:
-	if (error < 0)
-		release_attr_files(files);
-	git_buf_free(&dir);
+cleanup:
+	if (!error)
+		*out = &reader->files;
+	else
+		git_buf_set(&reader->last_path, "", 0);
 
+	git_buf_free(&dir);
 	return error;
+}
+
+int git_attrreader_get_many(
+	const char **values,
+	git_attrreader *reader,
+	uint32_t flags,
+	const char *pathname,
+	size_t num_attr,
+	const char **names)
+{
+	git_vector *files;
+	git_attr_path path;
+	attr_get_many_info *info = NULL;
+	git_attr_file *file;
+	git_attr_rule *rule;
+	size_t num_found = 0;
+	size_t i, j, k;
+
+	if (git_attr_path__init(&path, pathname, git_repository_workdir(reader->repo)) < 0 ||
+		git_attrreader_files(&files, reader, pathname, flags) < 0) 
+		return -1;
+
+	info = git__calloc(num_attr, sizeof(attr_get_many_info));
+	GITERR_CHECK_ALLOC(info);
+
+	git_vector_foreach(files, i, file) {
+
+		git_attr_file__foreach_matching_rule(file, &path, j, rule) {
+
+			for (k = 0; k < num_attr; k++) {
+				size_t pos;
+
+				if (info[k].found != NULL) /* already found assignment */
+					continue;
+
+				if (!info[k].name.name) {
+					info[k].name.name = names[k];
+					info[k].name.name_hash = git_attr_file__name_hash(names[k]);
+				}
+
+				if (!git_vector_bsearch(&pos, &rule->assigns, &info[k].name)) {
+					info[k].found = (git_attr_assignment *)
+						git_vector_get(&rule->assigns, pos);
+					values[k] = info[k].found->value;
+
+					if (++num_found == num_attr)
+						goto cleanup;
+				}
+			}
+		}
+	}
+
+	for (k = 0; k < num_attr; k++) {
+		if (!info[k].found)
+			values[k] = NULL;
+	}
+
+cleanup:
+	git_attr_path__free(&path);
+	git__free(info);
+
+	return 0;
+}
+
+void git_attrreader_free(git_attrreader *reader)
+{
+	if (!reader)
+		return;
+
+	git_attrreader_clear(reader);
+
+	git_vector_free(&reader->files);
+	git_buf_free(&reader->last_path);
 }

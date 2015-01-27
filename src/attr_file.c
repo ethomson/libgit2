@@ -127,8 +127,13 @@ int git_attr_file__load(
 	case GIT_ATTR_FILE__FROM_FILE: {
 		int fd;
 
-		if (p_stat(entry->fullpath, &st) < 0)
+		if ((error = p_stat(entry->fullpath, &st)) < 0) {
+			if (errno == ENOENT || errno == ENOTDIR)
+				return GIT_ENOTFOUND;
+
 			return git_path_set_error(errno, entry->fullpath, "stat");
+		}
+
 		if (S_ISDIR(st.st_mode))
 			return GIT_ENOTFOUND;
 
