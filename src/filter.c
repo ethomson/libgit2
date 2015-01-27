@@ -511,6 +511,7 @@ int git_filter_list_load(
 			fe = git_array_alloc(fl->filters);
 			GITERR_CHECK_ALLOC(fe);
 			fe->filter  = fdef->filter;
+			fe->stream  = NULL;
 			fe->payload = payload;
 		}
 	}
