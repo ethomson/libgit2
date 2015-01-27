@@ -576,6 +576,7 @@ int git_filter_list_push(
 	fe = git_array_alloc(fl->filters);
 	GITERR_CHECK_ALLOC(fe);
 	fe->filter  = filter;
+	fe->stream = NULL;
 	fe->payload = payload;
 
 	return 0;
