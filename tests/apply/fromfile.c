@@ -68,6 +68,7 @@ static int validate_and_apply_patchfile(
 	int error;
 
 	cl_git_pass(git_patch_from_buffers(&patch_fromdiff,
+		repo,
 		old, old ? strlen(old) : 0, "file.txt",
 		new, new ? strlen(new) : 0, "file.txt",
 		diff_opts));

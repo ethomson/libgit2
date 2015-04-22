@@ -60,6 +60,7 @@ GIT_EXTERN(int) git_patch_from_diff(
  * you must call `git_patch_free()` on the patch when done.
  *
  * @param out The generated patch; NULL on error
+ * @param repo The repository
  * @param old_blob Blob for old side of diff, or NULL for empty blob
  * @param old_as_path Treat old blob as if it had this filename; can be NULL
  * @param new_blob Blob for new side of diff, or NULL for empty blob
@@ -69,6 +70,7 @@ GIT_EXTERN(int) git_patch_from_diff(
  */
 GIT_EXTERN(int) git_patch_from_blobs(
 	git_patch **out,
+	git_repository *repo,
 	const git_blob *old_blob,
 	const char *old_as_path,
 	const git_blob *new_blob,
@@ -94,6 +96,7 @@ GIT_EXTERN(int) git_patch_from_blobs(
  */
 GIT_EXTERN(int) git_patch_from_blob_and_buffer(
 	git_patch **out,
+	git_repository *repo,
 	const git_blob *old_blob,
 	const char *old_as_path,
 	const char *buffer,
@@ -121,6 +124,7 @@ GIT_EXTERN(int) git_patch_from_blob_and_buffer(
  */
 GIT_EXTERN(int) git_patch_from_buffers(
 	git_patch **out,
+	git_repository *repo,
 	const void *old_buffer,
 	size_t old_len,
 	const char *old_as_path,

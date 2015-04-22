@@ -23,7 +23,8 @@ typedef struct {
 
 struct git_patch {
 	git_refcount rc;
-	git_diff *diff; /* for refcount purposes, maybe NULL for blob diffs */
+	git_repository *repo;
+	git_diff_options opts;
 	git_diff_delta *delta;
 	size_t delta_index;
 	git_diff_file_content ofile;
@@ -51,6 +52,8 @@ extern int git_patch__invoke_callbacks(
 
 typedef struct git_diff_output git_diff_output;
 struct git_diff_output {
+	git_diff *diff;
+
 	/* these callbacks are issued with the diff data */
 	git_diff_file_cb file_cb;
 	git_diff_hunk_cb hunk_cb;

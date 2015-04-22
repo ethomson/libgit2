@@ -23,7 +23,7 @@ enum {
 };
 
 static void diff_output_init(
-	git_diff_output*, const git_diff_options*,
+	git_diff_output*, git_diff *, const git_diff_options*,
 	git_diff_file_cb, git_diff_hunk_cb, git_diff_line_cb, void*);
 
 static void diff_output_to_patch(git_diff_output *, git_patch *);
@@ -51,8 +51,8 @@ static void diff_patch_init_common(git_patch *patch)
 
 	patch->flags |= GIT_DIFF_PATCH_INITIALIZED;
 
-	if (patch->diff)
-		git_diff_addref(patch->diff);
+//	if (patch->diff)
+//		git_diff_addref(patch->diff);
 }
 
 static int diff_patch_init_from_diff(
@@ -61,9 +61,12 @@ static int diff_patch_init_from_diff(
 	int error = 0;
 
 	memset(patch, 0, sizeof(*patch));
-	patch->diff  = diff;
+	patch->repo  = diff->repo;
+//	patch->diff  = diff;
 	patch->delta = git_vector_get(&diff->deltas, delta_index);
 	patch->delta_index = delta_index;
+
+	memcpy(&patch->opts, &diff->opts, sizeof(git_diff_options));
 
 	if ((error = git_diff_file_content__init_from_diff(
 			&patch->ofile, diff, delta_index, true)) < 0 ||
@@ -82,6 +85,10 @@ static int diff_patch_alloc_from_diff(
 	int error;
 	git_patch *patch = git__calloc(1, sizeof(git_patch));
 	GITERR_CHECK_ALLOC(patch);
+
+	patch->repo = diff->repo;
+
+	memcpy(&patch->opts, &diff->opts, sizeof(git_diff_options));
 
 	if (!(error = diff_patch_init_from_diff(patch, diff, delta_index))) {
 		patch->flags |= GIT_DIFF_PATCH_ALLOCATED;
@@ -175,8 +182,8 @@ cleanup:
 static int diff_patch_invoke_file_callback(
 	git_patch *patch, git_diff_output *output)
 {
-	float progress = patch->diff ?
-		((float)patch->delta_index / patch->diff->deltas.length) : 1.0f;
+	float progress = output->diff ?
+		((float)patch->delta_index / output->diff->deltas.length) : 1.0f;
 
 	if (!output->file_cb)
 		return 0;
@@ -219,9 +226,6 @@ static void diff_patch_free(git_patch *patch)
 	git_array_clear(patch->lines);
 	git_array_clear(patch->hunks);
 
-	git_diff_free(patch->diff); /* decrements refcount */
-	patch->diff = NULL;
-
 	git_pool_clear(&patch->flattened);
 
 	if (patch->flags & GIT_DIFF_PATCH_ALLOCATED)
@@ -254,7 +258,7 @@ int git_diff_foreach(
 	memset(&xo, 0, sizeof(xo));
 	memset(&patch, 0, sizeof(patch));
 	diff_output_init(
-		&xo.output, &diff->opts, file_cb, hunk_cb, data_cb, payload);
+		&xo.output, diff, &diff->opts, file_cb, hunk_cb, data_cb, payload);
 	git_xdiff_init(&xo, &diff->opts);
 
 	git_vector_foreach(&diff->deltas, idx, patch.delta) {
@@ -331,7 +335,12 @@ static int diff_patch_from_sources(
 
 	GITERR_CHECK_VERSION(opts, GIT_DIFF_OPTIONS_VERSION, "git_diff_options");
 
-	if (opts && (opts->flags & GIT_DIFF_REVERSE) != 0) {
+	if (opts)
+		memcpy(&pd->patch.opts, opts, sizeof(git_diff_options));
+	else
+		git_diff_init_options(&pd->patch.opts, GIT_DIFF_OPTIONS_VERSION);
+
+	if ((pd->patch.opts.flags & GIT_DIFF_REVERSE) != 0) {
 		void *tmp = lfile; lfile = rfile; rfile = tmp;
 		tmp = ldata; ldata = rdata; rdata = tmp;
 	}
@@ -361,6 +370,7 @@ static int diff_patch_from_sources(
 
 static int diff_patch_with_delta_alloc(
 	diff_patch_with_delta **out,
+	git_repository *repo,
 	const char **old_path,
 	const char **new_path)
 {
@@ -376,6 +386,7 @@ static int diff_patch_with_delta_alloc(
 	*out = pd = git__calloc(1, alloc_len);
 	GITERR_CHECK_ALLOC(pd);
 
+	pd->patch.repo = repo;
 	pd->patch.flags = GIT_DIFF_PATCH_ALLOCATED;
 
 	if (*old_path) {
@@ -408,7 +419,7 @@ static int diff_from_sources(
 
 	memset(&xo, 0, sizeof(xo));
 	diff_output_init(
-		&xo.output, opts, file_cb, hunk_cb, data_cb, payload);
+		&xo.output, NULL, opts, file_cb, hunk_cb, data_cb, payload);
 	git_xdiff_init(&xo, opts);
 
 	memset(&pd, 0, sizeof(pd));
@@ -422,6 +433,7 @@ static int diff_from_sources(
 
 static int patch_from_sources(
 	git_patch **out,
+	git_repository *repo,
 	git_diff_file_content_src *oldsrc,
 	git_diff_file_content_src *newsrc,
 	const git_diff_options *opts)
@@ -434,7 +446,7 @@ static int patch_from_sources(
 	*out = NULL;
 
 	if ((error = diff_patch_with_delta_alloc(
-			&pd, &oldsrc->as_path, &newsrc->as_path)) < 0)
+			&pd, repo, &oldsrc->as_path, &newsrc->as_path)) < 0)
 		return error;
 
 	memset(&xo, 0, sizeof(xo));
@@ -470,6 +482,7 @@ int git_diff_blobs(
 
 int git_patch_from_blobs(
 	git_patch **out,
+	git_repository *repo,
 	const git_blob *old_blob,
 	const char *old_path,
 	const git_blob *new_blob,
@@ -480,7 +493,7 @@ int git_patch_from_blobs(
 		GIT_DIFF_FILE_CONTENT_SRC__BLOB(old_blob, old_path);
 	git_diff_file_content_src nsrc =
 		GIT_DIFF_FILE_CONTENT_SRC__BLOB(new_blob, new_path);
-	return patch_from_sources(out, &osrc, &nsrc, opts);
+	return patch_from_sources(out, repo, &osrc, &nsrc, opts);
 }
 
 int git_diff_blob_to_buffer(
@@ -505,6 +518,7 @@ int git_diff_blob_to_buffer(
 
 int git_patch_from_blob_and_buffer(
 	git_patch **out,
+	git_repository *repo,
 	const git_blob *old_blob,
 	const char *old_path,
 	const char *buf,
@@ -516,7 +530,7 @@ int git_patch_from_blob_and_buffer(
 		GIT_DIFF_FILE_CONTENT_SRC__BLOB(old_blob, old_path);
 	git_diff_file_content_src nsrc =
 		GIT_DIFF_FILE_CONTENT_SRC__BUF(buf, buflen, buf_path);
-	return patch_from_sources(out, &osrc, &nsrc, opts);
+	return patch_from_sources(out, repo, &osrc, &nsrc, opts);
 }
 
 int git_diff_buffers(
@@ -542,6 +556,7 @@ int git_diff_buffers(
 
 int git_patch_from_buffers(
 	git_patch **out,
+	git_repository *repo,
 	const void *old_buf,
 	size_t old_len,
 	const char *old_path,
@@ -554,7 +569,7 @@ int git_patch_from_buffers(
 		GIT_DIFF_FILE_CONTENT_SRC__BUF(old_buf, old_len, old_path);
 	git_diff_file_content_src nsrc =
 		GIT_DIFF_FILE_CONTENT_SRC__BUF(new_buf, new_len, new_path);
-	return patch_from_sources(out, &osrc, &nsrc, opts);
+	return patch_from_sources(out, repo, &osrc, &nsrc, opts);
 }
 
 int git_patch_from_diff(
@@ -765,7 +780,7 @@ size_t git_patch_size(
 
 git_diff *git_patch__diff(git_patch *patch)
 {
-	return patch->diff;
+	return NULL; // patch->diff;
 }
 
 git_diff_driver *git_patch__driver(git_patch *patch)
@@ -898,6 +913,7 @@ static int diff_patch_line_cb(
 
 static void diff_output_init(
 	git_diff_output *out,
+	git_diff *diff,
 	const git_diff_options *opts,
 	git_diff_file_cb file_cb,
 	git_diff_hunk_cb hunk_cb,
@@ -908,6 +924,7 @@ static void diff_output_init(
 
 	memset(out, 0, sizeof(*out));
 
+	out->diff    = diff;
 	out->file_cb = file_cb;
 	out->hunk_cb = hunk_cb;
 	out->data_cb = data_cb;
@@ -917,6 +934,6 @@ static void diff_output_init(
 static void diff_output_to_patch(git_diff_output *out, git_patch *patch)
 {
 	diff_output_init(
-		out, NULL,
+		out, NULL, &patch->opts,
 		diff_patch_file_cb, diff_patch_hunk_cb, diff_patch_line_cb, patch);
 }

@@ -35,6 +35,7 @@ static int apply_buf(
 	int error;
 
 	cl_git_pass(git_patch_from_buffers(&patch,
+		repo,
 		old, old ? strlen(old) : 0, oldname,
 		new, new ? strlen(new) : 0, newname,
 		diff_opts));
@@ -173,4 +174,17 @@ void test_apply_fromdiff__delete(void)
 		FILE_ORIGINAL, "file.txt",
 		NULL, NULL,
 		PATCH_DELETE_ORIGINAL, NULL));
+}
+
+void test_apply_fromdiff__binary_change_middle(void)
+{
+	git_diff_options opts = GIT_DIFF_OPTIONS_INIT;
+
+	opts.flags = GIT_DIFF_FORCE_BINARY | GIT_DIFF_SHOW_BINARY;
+	opts.id_abbrev = GIT_OID_HEXSZ;
+
+	cl_git_pass(apply_buf(
+		FILE_ORIGINAL, "file.txt",
+		FILE_CHANGE_MIDDLE, "file.txt",
+		PATCH_ORIGINAL_TO_CHANGE_MIDDLE, &opts));
 }

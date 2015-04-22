@@ -14,12 +14,13 @@
 #include "git2/sys/diff.h"
 
 typedef struct {
-	git_diff *diff;
+	git_repository *repo;
+	git_diff_options opts;
+	int (*strcomp)(const char *, const char *);
 	git_diff_format_t format;
 	git_diff_line_cb print_cb;
 	void *payload;
 	git_buf *buf;
-	uint32_t flags;
 	int oid_strlen;
 	git_diff_line line;
 } diff_print_info;
@@ -27,28 +28,28 @@ typedef struct {
 static int diff_print_info_init(
 	diff_print_info *pi,
 	git_buf *out,
-	git_diff *diff,
+	git_repository *repo,
+	git_diff_options *opts,
+	int (*strcomp)(const char *, const char *),
 	git_diff_format_t format,
 	git_diff_line_cb cb,
 	void *payload)
 {
-	pi->diff     = diff;
-	pi->format   = format;
+	pi->repo = repo;
+	pi->format = format;
 	pi->print_cb = cb;
-	pi->payload  = payload;
-	pi->buf      = out;
+	pi->payload = payload;
+	pi->buf = out;
 
-	if (diff)
-		pi->flags = diff->opts.flags;
+	if (opts)
+		memcpy(&pi->opts, opts, sizeof(git_diff_options));
 	else
-		pi->flags = 0;
+		git_diff_init_options(&pi->opts, GIT_DIFF_OPTIONS_VERSION);
 
-	if (diff && diff->opts.id_abbrev != 0)
-		pi->oid_strlen = diff->opts.id_abbrev;
-	else if (!diff || !diff->repo)
-		pi->oid_strlen = GIT_ABBREV_DEFAULT;
+	if (pi->opts.id_abbrev != 0)
+		pi->oid_strlen = pi->opts.id_abbrev;
 	else if (git_repository__cvar(
-		&pi->oid_strlen, diff->repo, GIT_CVAR_ABBREV) < 0)
+		&pi->oid_strlen, repo, GIT_CVAR_ABBREV) < 0)
 		return -1;
 
 	pi->oid_strlen += 1; /* for NUL byte */
@@ -64,6 +65,30 @@ static int diff_print_info_init(
 	pi->line.num_lines  = 1;
 
 	return 0;
+}
+
+static int diff_print_info_init_fromdiff(
+	diff_print_info *pi,
+	git_buf *out,
+	git_diff *diff,
+	git_diff_format_t format,
+	git_diff_line_cb cb,
+	void *payload)
+{
+	return diff_print_info_init(pi, out, diff->repo, &diff->opts,
+		diff->strcomp, format, cb, payload);
+}
+
+static int diff_print_info_init_frompatch(
+	diff_print_info *pi,
+	git_buf *out,
+	git_patch *patch,
+	git_diff_format_t format,
+	git_diff_line_cb cb,
+	void *payload)
+{
+	return diff_print_info_init(pi, out, patch->repo, &patch->opts,
+		git__strcmp, format, cb, payload);
 }
 
 static char diff_pick_suffix(int mode)
@@ -104,7 +129,7 @@ static int diff_print_one_name_only(
 
 	GIT_UNUSED(progress);
 
-	if ((pi->flags & GIT_DIFF_SHOW_UNMODIFIED) == 0 &&
+	if ((pi->opts.flags & GIT_DIFF_SHOW_UNMODIFIED) == 0 &&
 		delta->status == GIT_DELTA_UNMODIFIED)
 		return 0;
 
@@ -128,11 +153,11 @@ static int diff_print_one_name_status(
 	git_buf *out = pi->buf;
 	char old_suffix, new_suffix, code = git_diff_status_char(delta->status);
 	int (*strcomp)(const char *, const char *) =
-		pi->diff ? pi->diff->strcomp : git__strcmp;
+		pi->strcomp ? pi->strcomp : git__strcmp;
 
 	GIT_UNUSED(progress);
 
-	if ((pi->flags & GIT_DIFF_SHOW_UNMODIFIED) == 0 && code == ' ')
+	if ((pi->opts.flags & GIT_DIFF_SHOW_UNMODIFIED) == 0 && code == ' ')
 		return 0;
 
 	old_suffix = diff_pick_suffix(delta->old_file.mode);
@@ -172,7 +197,7 @@ static int diff_print_one_raw(
 
 	GIT_UNUSED(progress);
 
-	if ((pi->flags & GIT_DIFF_SHOW_UNMODIFIED) == 0 && code == ' ')
+	if ((pi->opts.flags & GIT_DIFF_SHOW_UNMODIFIED) == 0 && code == ' ')
 		return 0;
 
 	git_buf_clear(out);
@@ -371,7 +396,6 @@ done:
 	return error;
 }
 
-/* git diff --binary 8d7523f~2 8d7523f~1 */
 static int diff_print_patch_file_binary(
 	diff_print_info *pi, const git_diff_delta *delta,
 	const char *oldpfx, const char *newpfx)
@@ -381,7 +405,7 @@ static int diff_print_patch_file_binary(
 	int error;
 	size_t pre_binary_size;
 
-	if ((pi->flags & GIT_DIFF_SHOW_BINARY) == 0)
+	if ((pi->opts.flags & GIT_DIFF_SHOW_BINARY) == 0)
 		goto noshow;
 
 	pre_binary_size = pi->buf->size;
@@ -391,9 +415,9 @@ static int diff_print_patch_file_binary(
 	old_id = (delta->status != GIT_DELTA_ADDED) ? &delta->old_file.id : NULL;
 	new_id = (delta->status != GIT_DELTA_DELETED) ? &delta->new_file.id : NULL;
 
-	if (old_id && (error = git_blob_lookup(&old, pi->diff->repo, old_id)) < 0)
+	if (old_id && (error = git_blob_lookup(&old, pi->repo, old_id)) < 0)
 		goto done;
-	if (new_id && (error = git_blob_lookup(&new, pi->diff->repo,new_id)) < 0)
+	if (new_id && (error = git_blob_lookup(&new, pi->repo,new_id)) < 0)
 		goto done;
 
 	if ((error = print_binary_hunk(pi, old, new)) < 0 ||
@@ -427,13 +451,13 @@ static int diff_print_patch_file(
 {
 	int error;
 	diff_print_info *pi = data;
-	const char *oldpfx =
-		pi->diff ? pi->diff->opts.old_prefix : DIFF_OLD_PREFIX_DEFAULT;
-	const char *newpfx =
-		pi->diff ? pi->diff->opts.new_prefix : DIFF_NEW_PREFIX_DEFAULT;
+	const char *oldpfx = pi->opts.old_prefix ?
+		pi->opts.old_prefix : DIFF_OLD_PREFIX_DEFAULT;
+	const char *newpfx = pi->opts.new_prefix ?
+		pi->opts.new_prefix : DIFF_NEW_PREFIX_DEFAULT;
 
 	bool binary = !!(delta->flags & GIT_DIFF_FLAG_BINARY);
-	bool show_binary = !!(pi->flags & GIT_DIFF_SHOW_BINARY);
+	bool show_binary = !!(pi->opts.flags & GIT_DIFF_SHOW_BINARY);
 	int oid_strlen = binary && show_binary ?
 		GIT_OID_HEXSZ + 1 : pi->oid_strlen;
 
@@ -444,7 +468,7 @@ static int diff_print_patch_file(
 		delta->status == GIT_DELTA_IGNORED ||
 		delta->status == GIT_DELTA_UNREADABLE ||
 		(delta->status == GIT_DELTA_UNTRACKED &&
-		 (pi->flags & GIT_DIFF_SHOW_UNTRACKED_CONTENT) == 0))
+		 (pi->opts.flags & GIT_DIFF_SHOW_UNTRACKED_CONTENT) == 0))
 		return 0;
 
 	if ((error = git_diff_delta__format_file_header(
@@ -541,7 +565,7 @@ int git_diff_print(
 		return -1;
 	}
 
-	if (!(error = diff_print_info_init(
+	if (!(error = diff_print_info_init_fromdiff(
 			&pi, &buf, diff, format, print_cb, payload)))
 	{
 		error = git_diff_foreach(
@@ -568,8 +592,8 @@ int git_patch_print(
 
 	assert(patch && print_cb);
 
-	if (!(error = diff_print_info_init(
-			&pi, &temp, git_patch__diff(patch),
+	if (!(error = diff_print_info_init_frompatch(
+			&pi, &temp, patch,
 			GIT_DIFF_FORMAT_PATCH, print_cb, payload)))
 	{
 		error = git_patch__invoke_callbacks(
