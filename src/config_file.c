@@ -1499,6 +1499,8 @@ static int config_write(diskfile_backend *cfg, const char *key, const regex_t *p
 			/* We've found the variable we wanted to change, so
 			 * write anything up to it */
 			git_filebuf_write(&file, write_start, pre_end - write_start);
+			write_start = post_start;
+
 			preg_replaced = 1;
 
 			/* Then replace the variable. If the value is NULL, it
@@ -1506,20 +1508,14 @@ static int config_write(diskfile_backend *cfg, const char *key, const regex_t *p
 			if (value != NULL) {
 				const char *q = quotes_for_value(value);
 				git_filebuf_printf(&file, "\t%s = %s%s%s\n", name, q, value, q);
-			}
 
-			/*
-			 * If we have a multivar, we should keep looking for entries,
-			 * but only if we're in the right section. Otherwise we'll end up
-			 * looping on the edge of a matching and a non-matching section.
-			 */
-			if (section_matches && preg != NULL) {
-				write_start = post_start;
-				continue;
+				/* If this is not a multivar, and we see this value again
+				 * (perhaps in a different, same-named section) then we
+				 * should delete it.
+				 */
+				if (preg == NULL)
+					value = NULL;
 			}
-
-			write_trailer = 1;
-			break; /* break from the loop */
 		}
 	}
 
@@ -1539,37 +1535,32 @@ static int config_write(diskfile_backend *cfg, const char *key, const regex_t *p
 	 * want to write the rest of the file. Otherwise we need to write
 	 * out the whole file and then the new variable.
 	 */
-	if (write_trailer) {
-		/* Write out rest of the file */
-		git_filebuf_write(&file, post_start, reader->buffer.size - (post_start - data_start));
+	if (preg_replaced) {
+		git_filebuf_printf(&file, "\n%s", write_start);
 	} else {
-		if (preg_replaced) {
-			git_filebuf_printf(&file, "\n%s", write_start);
-		} else {
-			const char *q;
+		const char *q;
 
-			git_filebuf_write(&file, reader->buffer.ptr, reader->buffer.size);
+		git_filebuf_write(&file, reader->buffer.ptr, reader->buffer.size);
 
-			if (reader->buffer.size > 0 && *(reader->buffer.ptr + reader->buffer.size - 1) != '\n')
-				git_filebuf_write(&file, "\n", 1);
+		if (reader->buffer.size > 0 && *(reader->buffer.ptr + reader->buffer.size - 1) != '\n')
+			git_filebuf_write(&file, "\n", 1);
 
-			/* And now if we just need to add a variable */
-			if (!section_matches && write_section(&file, section) < 0)
-				goto rewrite_fail;
+		/* And now if we just need to add a variable */
+		if (!section_matches && write_section(&file, section) < 0)
+			goto rewrite_fail;
 
-			/* Sanity check: if we are here, and value is NULL, that means that somebody
-			 * touched the config file after our initial read. We should probably assert()
-			 * this, but instead we'll handle it gracefully with an error. */
-			if (value == NULL) {
-				giterr_set(GITERR_CONFIG,
-					"race condition when writing a config file (a cvar has been removed)");
-				goto rewrite_fail;
-			}
-
-			/* If we are here, there is at least a section line */
-			q = quotes_for_value(value);
-			git_filebuf_printf(&file, "\t%s = %s%s%s\n", name, q, value, q);
+		/* Sanity check: if we are here, and value is NULL, that means that somebody
+			* touched the config file after our initial read. We should probably assert()
+			* this, but instead we'll handle it gracefully with an error. */
+		if (value == NULL) {
+			giterr_set(GITERR_CONFIG,
+				"race condition when writing a config file (a cvar has been removed)");
+			goto rewrite_fail;
 		}
+
+		/* If we are here, there is at least a section line */
+		q = quotes_for_value(value);
+		git_filebuf_printf(&file, "\t%s = %s%s%s\n", name, q, value, q);
 	}
 
 	git__free(section);
