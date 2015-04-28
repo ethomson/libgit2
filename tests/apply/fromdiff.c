@@ -174,3 +174,16 @@ void test_apply_fromdiff__delete(void)
 		NULL, NULL,
 		PATCH_DELETE_ORIGINAL, NULL));
 }
+
+void test_apply_fromdiff__binary_change_middle(void)
+{
+	git_diff_options opts = GIT_DIFF_OPTIONS_INIT;
+
+	opts.flags = GIT_DIFF_FORCE_BINARY | GIT_DIFF_SHOW_BINARY;
+	opts.id_abbrev = GIT_OID_HEXSZ;
+
+	cl_git_pass(apply_buf(
+		FILE_ORIGINAL, "file.txt",
+		FILE_CHANGE_MIDDLE, "file.txt",
+		PATCH_ORIGINAL_TO_CHANGE_MIDDLE_BINARY, &opts));
+}

@@ -331,12 +331,13 @@ static int diff_patch_from_sources(
 
 	GITERR_CHECK_VERSION(opts, GIT_DIFF_OPTIONS_VERSION, "git_diff_options");
 
-	if (opts && (opts->flags & GIT_DIFF_REVERSE) != 0) {
+	pd->patch.flags = opts ? opts->flags : GIT_DIFF_NORMAL;
+	pd->patch.delta = &pd->delta;
+
+	if ((pd->patch.flags & GIT_DIFF_REVERSE) != 0) {
 		void *tmp = lfile; lfile = rfile; rfile = tmp;
 		tmp = ldata; ldata = rdata; rdata = tmp;
 	}
-
-	pd->patch.delta = &pd->delta;
 
 	if (!oldsrc->as_path) {
 		if (newsrc->as_path)

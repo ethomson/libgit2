@@ -48,6 +48,17 @@
 	"-(this line is changed)\n" \
 	"+(THIS line is changed!)\n"
 
+#define PATCH_ORIGINAL_TO_CHANGE_MIDDLE_BINARY \
+	"diff --git a/file.txt b/file.txt\n" \
+	"index 94320269a53c6caded8826cacc4f9ac2b0e96ef4..cd8fd129b439d6088b8a9b6db0da25dc\n" \
+	"0237b257 100644\n" \
+	"GIT binary patch\n" \
+	"delta 31\n" \
+	"mcmeBV>|&hYB^u)48LW_#nU|`NS*(zpk(igBnxZ%{P8$H6qzWbg\n" \
+	"\n" \
+	"delta 30\n" \
+	"kcmeBT>|~taB~p@+S*(zgnU|^nq?0oe^U_mOCdO+60G;6qg#Z8m\n"
+
 /* A change of the first line (and the resultant patch) */
 
 #define FILE_CHANGE_FIRSTLINE \
