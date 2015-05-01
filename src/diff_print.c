@@ -80,6 +80,8 @@ static int diff_print_info_init_fromdiff(
 		pi->oid_strlen = diff->opts.id_abbrev;
 	}
 
+	diff->
+
 	return diff_print_info_init(pi, out, repo, format, cb, payload);
 }
 
@@ -99,6 +101,8 @@ static int diff_print_info_init_frompatch(
 
 	if (patch->diff)
 		pi->flags = patch->diff->opts.flags;
+
+
 
 	pi->old_data = patch->ofile.map.data;
 	pi->old_data_len = patch->ofile.map.len;
