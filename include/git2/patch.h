@@ -36,9 +36,11 @@ typedef struct git_patch git_patch;
  * done with it.  You can use the patch object to loop over all the hunks
  * and lines in the diff of the one delta.
  *
- * For an unchanged file or a binary file, no `git_patch` will be
- * created, the output will be set to NULL, and the `binary` flag will be
- * set true in the `git_diff_delta` structure.
+ * For an unchanged file, no `git_patch` will be created and the output
+ * will be set to NULL.  If `GIT_DIFF_SHOW_BINARY` is specified, and the
+ * file is binary, then no `git_patch` will be created, the output will
+ * be set to NULL, and the `binary` flag will be set to true in the
+ * `git_diff_delta` structure.
  *
  * It is okay to pass NULL for either of the output parameters; if you pass
  * NULL for the `git_patch`, then the text diff will not be calculated.

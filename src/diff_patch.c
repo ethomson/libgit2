@@ -46,13 +46,28 @@ static void diff_patch_init_common(git_patch *patch)
 {
 	diff_patch_update_binary(patch);
 
-	if ((patch->delta->flags & GIT_DIFF_FLAG_BINARY) != 0)
-		patch->flags |= GIT_DIFF_PATCH_LOADED; /* LOADED but not DIFFABLE */
-
 	patch->flags |= GIT_DIFF_PATCH_INITIALIZED;
 
 	if (patch->diff)
 		git_diff_addref(patch->diff);
+}
+
+static int diff_patch_normalize_options(
+	git_diff_options *out,
+	const git_diff_options *opts)
+{
+	memcpy(out, opts, sizeof(git_diff_options));
+
+	out->old_prefix = opts->old_prefix ? git__strdup(opts->old_prefix) :
+		DIFF_OLD_PREFIX_DEFAULT;
+
+	out->new_prefix = opts->new_prefix ? git__strdup(opts->new_prefix) :
+		DIFF_NEW_PREFIX_DEFAULT;
+
+	GITERR_CHECK_ALLOC(out->old_prefix);
+	GITERR_CHECK_ALLOC(out->new_prefix);
+
+	return 0;
 }
 
 static int diff_patch_init_from_diff(
@@ -65,7 +80,9 @@ static int diff_patch_init_from_diff(
 	patch->delta = git_vector_get(&diff->deltas, delta_index);
 	patch->delta_index = delta_index;
 
-	if ((error = git_diff_file_content__init_from_diff(
+	if ((error = diff_patch_normalize_options(
+			&patch->diff_opts, &diff->opts)) < 0 ||
+		(error = git_diff_file_content__init_from_diff(
 			&patch->ofile, diff, delta_index, true)) < 0 ||
 		(error = git_diff_file_content__init_from_diff(
 			&patch->nfile, diff, delta_index, false)) < 0)
@@ -95,6 +112,14 @@ static int diff_patch_alloc_from_diff(
 	return error;
 }
 
+GIT_INLINE(bool) should_skip_binary(git_patch *patch, git_diff_file *file)
+{
+	if ((patch->diff_opts.flags & GIT_DIFF_SHOW_BINARY) != 0)
+		return false;
+
+	return (file->flags & GIT_DIFF_FLAG_BINARY) != 0;
+}
+
 static int diff_patch_load(git_patch *patch, git_diff_output *output)
 {
 	int error = 0;
@@ -120,25 +145,29 @@ static int diff_patch_load(git_patch *patch, git_diff_output *output)
 	 * need 2x data size and this minimizes peak memory footprint
 	 */
 	if (patch->ofile.src == GIT_ITERATOR_TYPE_WORKDIR) {
-		if ((error = git_diff_file_content__load(&patch->ofile)) < 0 ||
-			(patch->ofile.file->flags & GIT_DIFF_FLAG_BINARY) != 0)
+		if ((error = git_diff_file_content__load(
+				&patch->ofile, &patch->diff_opts)) < 0 ||
+			should_skip_binary(patch, patch->ofile.file))
 			goto cleanup;
 	}
 	if (patch->nfile.src == GIT_ITERATOR_TYPE_WORKDIR) {
-		if ((error = git_diff_file_content__load(&patch->nfile)) < 0 ||
-			(patch->nfile.file->flags & GIT_DIFF_FLAG_BINARY) != 0)
+		if ((error = git_diff_file_content__load(
+				&patch->nfile, &patch->diff_opts)) < 0 ||
+			should_skip_binary(patch, patch->nfile.file))
 			goto cleanup;
 	}
 
 	/* once workdir has been tried, load other data as needed */
 	if (patch->ofile.src != GIT_ITERATOR_TYPE_WORKDIR) {
-		if ((error = git_diff_file_content__load(&patch->ofile)) < 0 ||
-			(patch->ofile.file->flags & GIT_DIFF_FLAG_BINARY) != 0)
+		if ((error = git_diff_file_content__load(
+				&patch->ofile, &patch->diff_opts)) < 0 ||
+			should_skip_binary(patch, patch->ofile.file))
 			goto cleanup;
 	}
 	if (patch->nfile.src != GIT_ITERATOR_TYPE_WORKDIR) {
-		if ((error = git_diff_file_content__load(&patch->nfile)) < 0 ||
-			(patch->nfile.file->flags & GIT_DIFF_FLAG_BINARY) != 0)
+		if ((error = git_diff_file_content__load(
+				&patch->nfile, &patch->diff_opts)) < 0 ||
+			should_skip_binary(patch, patch->nfile.file))
 			goto cleanup;
 	}
 
@@ -156,10 +185,14 @@ cleanup:
 	diff_patch_update_binary(patch);
 
 	if (!error) {
+		bool skip_binary =
+			(patch->delta->flags & GIT_DIFF_FLAG_BINARY) != 0 &&
+			(patch->diff_opts.flags & GIT_DIFF_SHOW_BINARY) == 0;
+
 		/* patch is diffable only for non-binary, modified files where
 		 * at least one side has data and the data actually changed
 		 */
-		if ((patch->delta->flags & GIT_DIFF_FLAG_BINARY) == 0 &&
+		if (!skip_binary &&
 			patch->delta->status != GIT_DELTA_UNMODIFIED &&
 			(patch->ofile.map.len || patch->nfile.map.len) &&
 			(patch->ofile.map.len != patch->nfile.map.len ||
@@ -201,6 +234,10 @@ static int diff_patch_generate(git_patch *patch, git_diff_output *output)
 		(error = diff_patch_load(patch, output)) < 0)
 		return error;
 
+	/* For binary files, we don't generate hunks and lines */
+	if ((patch->delta->flags & GIT_DIFF_FLAG_BINARY) != 0)
+		return 0;
+
 	if ((patch->flags & GIT_DIFF_PATCH_DIFFABLE) == 0)
 		return 0;
 
@@ -223,6 +260,12 @@ static void diff_patch_free(git_patch *patch)
 	patch->diff = NULL;
 
 	git_pool_clear(&patch->flattened);
+
+	if (patch->diff_opts.old_prefix != DIFF_OLD_PREFIX_DEFAULT)
+		git__free((char *)patch->diff_opts.old_prefix);
+
+	if (patch->diff_opts.new_prefix != DIFF_NEW_PREFIX_DEFAULT)
+		git__free((char *)patch->diff_opts.new_prefix);
 
 	if (patch->flags & GIT_DIFF_PATCH_ALLOCATED)
 		git__free(patch);
@@ -331,13 +374,12 @@ static int diff_patch_from_sources(
 
 	GITERR_CHECK_VERSION(opts, GIT_DIFF_OPTIONS_VERSION, "git_diff_options");
 
-	pd->patch.flags = opts ? opts->flags : GIT_DIFF_NORMAL;
-	pd->patch.delta = &pd->delta;
-
-	if ((pd->patch.flags & GIT_DIFF_REVERSE) != 0) {
+	if (opts && (opts->flags & GIT_DIFF_REVERSE) != 0) {
 		void *tmp = lfile; lfile = rfile; rfile = tmp;
 		tmp = ldata; ldata = rdata; rdata = tmp;
 	}
+
+	pd->patch.delta = &pd->delta;
 
 	if (!oldsrc->as_path) {
 		if (newsrc->as_path)
@@ -435,7 +477,9 @@ static int patch_from_sources(
 	*out = NULL;
 
 	if ((error = diff_patch_with_delta_alloc(
-			&pd, &oldsrc->as_path, &newsrc->as_path)) < 0)
+			&pd, &oldsrc->as_path, &newsrc->as_path)) < 0 ||
+		(error = diff_patch_normalize_options(
+			&pd->patch.diff_opts, opts)) < 0)
 		return error;
 
 	memset(&xo, 0, sizeof(xo));

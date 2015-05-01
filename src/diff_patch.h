@@ -24,6 +24,7 @@ typedef struct {
 struct git_patch {
 	git_refcount rc;
 	git_diff *diff; /* for refcount purposes, maybe NULL for blob diffs */
+	git_diff_options diff_opts;
 	git_diff_delta *delta;
 	size_t delta_index;
 	git_diff_file_content ofile;

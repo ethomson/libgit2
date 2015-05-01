@@ -96,7 +96,9 @@ static int diff_print_info_init_frompatch(
 	memset(pi, 0, sizeof(diff_print_info));
 
 	pi->diff = patch->diff;
-	pi->flags = patch->flags;
+
+	if (patch->diff)
+		pi->flags = patch->diff->opts.flags;
 
 	pi->old_data = patch->ofile.map.data;
 	pi->old_data_len = patch->ofile.map.len;
