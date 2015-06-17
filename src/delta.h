@@ -111,4 +111,39 @@ GIT_INLINE(unsigned long) git_delta_get_hdr_size(
 	return size;
 }
 
+/**
+* Apply a git binary delta to recover the original content.
+* The caller is responsible for freeing the returned buffer.
+*
+* @param out the output buffer
+* @param out_len the length of the output buffer
+* @param base the base to copy from during copy instructions.
+* @param base_len number of bytes available at base.
+* @param delta the delta to execute copy/insert instructions from.
+* @param delta_len total number of bytes in the delta.
+* @return 0 on success or an error code
+*/
+extern int git_delta_apply(
+	void **out,
+	size_t *out_len,
+	const unsigned char *base,
+	size_t base_len,
+	const unsigned char *delta,
+	size_t delta_len);
+
+/**
+* Read the header of a git binary delta.
+*
+* @param base_out pointer to store the base size field.
+* @param result_out pointer to store the result size field.
+* @param delta the delta to execute copy/insert instructions from.
+* @param delta_len total number of bytes in the delta.
+* @return 0 on success or an error code
+*/
+extern int git_delta_read_header(
+	size_t *base_out,
+	size_t *result_out,
+	const unsigned char *delta,
+	size_t delta_len);
+
 #endif
