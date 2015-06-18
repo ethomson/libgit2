@@ -673,98 +673,6 @@ static bool is_racy_timestamp(git_time_t stamp, git_index_entry *entry)
 	return ((int32_t) stamp) <= entry->mtime.seconds;
 }
 
-static int match_stat_data(const git_index_entry *entry, struct stat *st, bool trust_ctime)
-{
-	int changed = 0;
-
-	if (entry->mtime.seconds != (int32_t) st->st_mtime)
-		changed++;
-
-	if (trust_ctime && entry->ctime.seconds != (int32_t) st->st_ctime)
-		changed++;
-
-	/* TODO: these two should be controlled by core.checkstat */
-	if (entry->uid != st->st_uid)
-		changed++;
-	if (entry->ino != st->st_ino)
-		changed++;
-
-	if (entry->file_size != (uint32_t) st->st_size)
-		changed++;
-
-	return changed;
-}
-
-static int index_entry_match_basic(const git_index_entry *entry, struct stat *st,
-				   int caps, bool trust_ctime)
-{
-	int changed = 0;
-	bool trust_mode    = !(caps & GIT_INDEXCAP_NO_FILEMODE);
-	bool have_symlinks = !(caps & GIT_INDEXCAP_NO_SYMLINKS);
-
-	switch (entry->mode & S_IFMT) {
-	case S_IFREG:
-		if (!S_ISREG(st->st_mode))
-			changed++;
-
-		/* Limit exec-bit changes to the user's  */
-		if (trust_mode && GIT_PERMS_IS_UEXEC(entry->mode ^ st->st_mode))
-			changed++;
-		break;
-	case S_IFLNK:
-		if (!S_ISLNK(st->st_mode) && (have_symlinks || !S_ISREG(st->st_mode)))
-			changed++;
-		break;
-	case S_IFGITLINK:
-		if (!S_ISDIR(st->st_mode))
-			changed++;
-		/*
-		 * Note that git uses compare_gitlink() here in order
-		 * to figure out if the submodule changed. We only
-		 * call this for smudging racily clean entries, which
-		 * is not something we do to links anyhow, so we don't
-		 * have to do it.
-		 */
-
-		return changed;
-	default:
-		giterr_set(GITERR_INDEX, "bad index entry mode %o", entry->mode);
-		return -1;
-
-	}
-
-	changed += match_stat_data(entry, st, trust_ctime);
-
-	/* Detect racily smudged entry */
-	if (entry->file_size == 0 && !git_oid_equal(&empty_blob, &entry->id))
-		changed++;
-
-	return changed;
-}
-
-static int compare_data(const git_index_entry *entry, const char *path, struct stat *st)
-{
-}
-
-static int index_entry_check_fs(const git_index_entry *entry, const char *path, struct stat *st)
-{
-	switch (entry & S_IFMT) {
-	case S_IFREG:
-		return compare_data(entry, path, st);
-		break;
-	case S_IFLNK:
-		return compare_link(ce, xsize_t(st->st_size));
-		break;
-	case S_IFDIR:
-		/* We don't get called for these, as we're only used for smudging racily-clean entries */
-		return 0;
-		break;
-	default:
-		return 1;
-		break;
-	}
-}
-
 /*
  * Force the next diff to take a look at those entries which have the
  * same timestamp as the current index.
@@ -773,43 +681,34 @@ static int truncate_racily_clean(git_index *index)
 {
 	size_t i;
 	int error;
-	struct stat st;
 	git_index_entry *entry;
-	git_buf path = GIT_BUF_INIT;
 	git_time_t ts = index->stamp.mtime;
-	git_config *cfg;
-	int trust_ctime;
-	const char *workdir;
+	git_diff_options diff_opts = GIT_DIFF_OPTIONS_INIT;
+	git_diff *diff;
 
 	/* Nothing to do if there's no repo to talk about */
 	if (!INDEX_OWNER(index))
 		return 0;
 
 	/* If there's no workdir, we can't know where to even check */
-	workdir = git_repository_workdir(INDEX_OWNER(index));
-	if (!workdir)
+	if (!git_repository_workdir(INDEX_OWNER(index)))
 		return 0;
 
-	if ((error = git_repository_config__weakptr(&cfg, INDEX_OWNER(index))) < 0)
-	    return error;
-
-	if (git_config__cvar(&trust_ctime, cfg, GIT_CVAR_TRUSTCTIME))
-		trust_ctime = 1;
-
+	diff_opts.flags |= GIT_DIFF_INCLUDE_TYPECHANGE | GIT_DIFF_IGNORE_SUBMODULES | GIT_DIFF_DISABLE_PATHSPEC_MATCH;
 	git_vector_foreach(&index->entries, i, entry) {
 		if (!is_racy_timestamp(ts, entry))
 			continue;
 
-		git_buf_clear(&path);
-		if (git_buf_joinpath(&path, workdir, entry->path) < 0)
-			return -1;
+		diff_opts.pathspec.count = 1;
+		diff_opts.pathspec.strings = (char **) &entry->path;
 
-		if ((error = p_lstat(path.ptr, &st)) < 0)
+		if ((error = git_diff_index_to_workdir(&diff, INDEX_OWNER(index), index, &diff_opts)) < 0)
 			return error;
 
-		if (index_entry_match_basic(entry, &st, git_index_caps(index), trust_ctime) > 0 &&
-		    index_entry_check_fs(entry, path.ptr) > 0)
+		if (git_diff_num_deltas(diff) > 0)
 			entry->file_size = 0;
+
+		git_diff_free(diff);
 	}
 
 	return 0;
