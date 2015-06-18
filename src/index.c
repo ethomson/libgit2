@@ -658,20 +658,109 @@ int git_index__changed_relative_to(
 			index->stamp.ino != fs->ino);
 }
 
+static bool is_racy_timestamp(git_time_t stamp, git_index_entry *entry)
+{
+	/* Git special-cases submodules in the check */
+	if (S_ISGITLINK(entry->mode))
+		return false;
+
+	/* If we never read the index, we can't have this race either */
+	if (stamp == 0)
+		return false;
+
+	/* If the timestamp is the same or newer than the index, it's racy */
+	return ((uint32_t) stamp) <= entry->mtime.seconds;
+}
+
+static int match_stat_data(const git_index_entry *entry, struct stat *st)
+{
+	int changed = 0;
+
+	if (entry->mtime.seconds != (uint32_t) st->st_mtime)
+		changed++;
+
+	return changed;
+}
+
+static int index_entry_match_basic(const git_index_entry *entry, struct stat *st,
+				   bool trust_mode, bool have_symlinks)
+{
+	int changed = 0;
+
+	switch (entry->mode & S_IFMT) {
+	case S_IFREG:
+		if (!S_ISREG(st->st_mode))
+			changed++;
+
+		/* Limit exec-bit changes to the user's  */
+		if (trust_mode && GIT_PERMS_IS_UEXEC(entry->mode ^ st->st_mode))
+			changed++;
+		break;
+	case S_IFLNK:
+		if (!S_ISLNK(st->st_mode) && (have_symlinks || !S_ISREG(st->st_mode)))
+			changed++;
+		break;
+	case S_IFGITLINK:
+		if (!S_ISDIR(st->st_mode))
+			changed++;
+		else if (compare_gitlink(entry))
+			changed++;
+		return changed;
+	default:
+		giterr_set(GITERR_INDEX, "bad index entry mode %o", entry->mode);
+		return -1;
+
+	}
+
+	changed += match_stat_data(entry, st);
+
+	/* Detect racily smudged entry */
+	if (entry->file_size == 0 && !git_oid_equal(&empty_blob, &entry->id))
+		changed++;
+
+	return changed;
+}
+
 /*
  * Force the next diff to take a look at those entries which have the
  * same timestamp as the current index.
  */
-static void truncate_racily_clean(git_index *index)
+static int truncate_racily_clean(git_index *index)
 {
 	size_t i;
+	int error;
+	struct stat st;
 	git_index_entry *entry;
+	git_buf path = GIT_BUF_INIT;
 	git_time_t ts = index->stamp.mtime;
+	const char *workdir;
 
+	/* Nothing to do if there's no repo to talk about */
+	if (!GIT_INDEX_OWNER(index))
+		return 0;
+
+	/* If there's no workdir, we can't know where to even check */
+	workdir = git_repository_workdir(GIT_INDEX_OWNER(index));
+	if (!workdir)
+		return 0;
+	
 	git_vector_foreach(&index->entries, i, entry) {
-		if (entry->mtime.seconds == ts || ts == 0)
+		if (!is_racy_timestamp(ts, entry))
+			continue;
+
+		git_buf_clear(&path);
+		if (git_buf_joinpath(&path, workdir, entry->path) < 0)
+			return -1;
+
+		if ((error = p_lstat(path.ptr, &st)) < 0)
+			return error;
+
+		if (index_entry_match_basic(entry, &st, !index->distrust_filemode, !index->no_symlinks) > 0 &&
+		    index_entry_check_fs(entry, path.ptr) > 0)
 			entry->file_size = 0;
 	}
+
+	return 0;
 }
 
 int git_index_write(git_index *index)
