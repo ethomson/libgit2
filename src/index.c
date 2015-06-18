@@ -17,6 +17,7 @@
 #include "pathspec.h"
 #include "ignore.h"
 #include "blob.h"
+#include "config.h"
 
 #include "git2/odb.h"
 #include "git2/oid.h"
@@ -669,23 +670,37 @@ static bool is_racy_timestamp(git_time_t stamp, git_index_entry *entry)
 		return false;
 
 	/* If the timestamp is the same or newer than the index, it's racy */
-	return ((uint32_t) stamp) <= entry->mtime.seconds;
+	return ((int32_t) stamp) <= entry->mtime.seconds;
 }
 
-static int match_stat_data(const git_index_entry *entry, struct stat *st)
+static int match_stat_data(const git_index_entry *entry, struct stat *st, bool trust_ctime)
 {
 	int changed = 0;
 
-	if (entry->mtime.seconds != (uint32_t) st->st_mtime)
+	if (entry->mtime.seconds != (int32_t) st->st_mtime)
+		changed++;
+
+	if (trust_ctime && entry->ctime.seconds != (int32_t) st->st_ctime)
+		changed++;
+
+	/* TODO: these two should be controlled by core.checkstat */
+	if (entry->uid != st->st_uid)
+		changed++;
+	if (entry->ino != st->st_ino)
+		changed++;
+
+	if (entry->file_size != (uint32_t) st->st_size)
 		changed++;
 
 	return changed;
 }
 
 static int index_entry_match_basic(const git_index_entry *entry, struct stat *st,
-				   bool trust_mode, bool have_symlinks)
+				   int caps, bool trust_ctime)
 {
 	int changed = 0;
+	bool trust_mode    = !(caps & GIT_INDEXCAP_NO_FILEMODE);
+	bool have_symlinks = !(caps & GIT_INDEXCAP_NO_SYMLINKS);
 
 	switch (entry->mode & S_IFMT) {
 	case S_IFREG:
@@ -703,8 +718,14 @@ static int index_entry_match_basic(const git_index_entry *entry, struct stat *st
 	case S_IFGITLINK:
 		if (!S_ISDIR(st->st_mode))
 			changed++;
-		else if (compare_gitlink(entry))
-			changed++;
+		/*
+		 * Note that git uses compare_gitlink() here in order
+		 * to figure out if the submodule changed. We only
+		 * call this for smudging racily clean entries, which
+		 * is not something we do to links anyhow, so we don't
+		 * have to do it.
+		 */
+
 		return changed;
 	default:
 		giterr_set(GITERR_INDEX, "bad index entry mode %o", entry->mode);
@@ -712,13 +733,36 @@ static int index_entry_match_basic(const git_index_entry *entry, struct stat *st
 
 	}
 
-	changed += match_stat_data(entry, st);
+	changed += match_stat_data(entry, st, trust_ctime);
 
 	/* Detect racily smudged entry */
 	if (entry->file_size == 0 && !git_oid_equal(&empty_blob, &entry->id))
 		changed++;
 
 	return changed;
+}
+
+static int compare_data(const git_index_entry *entry, const char *path, struct stat *st)
+{
+}
+
+static int index_entry_check_fs(const git_index_entry *entry, const char *path, struct stat *st)
+{
+	switch (entry & S_IFMT) {
+	case S_IFREG:
+		return compare_data(entry, path, st);
+		break;
+	case S_IFLNK:
+		return compare_link(ce, xsize_t(st->st_size));
+		break;
+	case S_IFDIR:
+		/* We don't get called for these, as we're only used for smudging racily-clean entries */
+		return 0;
+		break;
+	default:
+		return 1;
+		break;
+	}
 }
 
 /*
@@ -733,17 +777,25 @@ static int truncate_racily_clean(git_index *index)
 	git_index_entry *entry;
 	git_buf path = GIT_BUF_INIT;
 	git_time_t ts = index->stamp.mtime;
+	git_config *cfg;
+	int trust_ctime;
 	const char *workdir;
 
 	/* Nothing to do if there's no repo to talk about */
-	if (!GIT_INDEX_OWNER(index))
+	if (!INDEX_OWNER(index))
 		return 0;
 
 	/* If there's no workdir, we can't know where to even check */
-	workdir = git_repository_workdir(GIT_INDEX_OWNER(index));
+	workdir = git_repository_workdir(INDEX_OWNER(index));
 	if (!workdir)
 		return 0;
-	
+
+	if ((error = git_repository_config__weakptr(&cfg, INDEX_OWNER(index))) < 0)
+	    return error;
+
+	if (git_config__cvar(&trust_ctime, cfg, GIT_CVAR_TRUSTCTIME))
+		trust_ctime = 1;
+
 	git_vector_foreach(&index->entries, i, entry) {
 		if (!is_racy_timestamp(ts, entry))
 			continue;
@@ -755,7 +807,7 @@ static int truncate_racily_clean(git_index *index)
 		if ((error = p_lstat(path.ptr, &st)) < 0)
 			return error;
 
-		if (index_entry_match_basic(entry, &st, !index->distrust_filemode, !index->no_symlinks) > 0 &&
+		if (index_entry_match_basic(entry, &st, git_index_caps(index), trust_ctime) > 0 &&
 		    index_entry_check_fs(entry, path.ptr) > 0)
 			entry->file_size = 0;
 	}
