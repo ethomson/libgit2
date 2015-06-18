@@ -1098,3 +1098,49 @@ void test_status_worktree__unreadable_as_untracked(void)
 	cl_assert_equal_i(0, counts.wrong_sorted_path);
 }
 
+/*
+ * rm *
+ * git config core.autocrlf true
+ * git reset --hard HEAD
+ * sleep 1 # let the index tick
+ * git status # important, updates the racy bits in the index
+ * git config core.autocrlf false
+ * git status
+ * expected: empty
+ */
+void test_status_worktree__badly_filtered_files_are_clean(void)
+{
+	git_repository *repo = cl_git_sandbox_init("testrepo");
+	git_reference *head;
+	git_object *head_object;
+	git_status_options opts = GIT_STATUS_OPTIONS_INIT;
+	status_entry_counts counts = {0};
+
+	opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
+	opts.flags = GIT_STATUS_OPT_DEFAULTS | GIT_STATUS_OPT_UPDATE_INDEX;
+
+	cl_git_pass(git_repository_head(&head, repo));
+	cl_git_pass(git_reference_peel(&head_object, head, GIT_OBJ_COMMIT));
+
+	cl_repo_set_bool(repo, "core.autocrlf", true);
+	cl_git_pass(git_reset(repo, head_object, GIT_RESET_HARD, NULL));
+
+	p_sleep(1);
+
+	/* reread anything that was racy in the index */
+	cl_git_pass(
+		git_status_foreach_ext(repo, &opts, cb_status__normal, &counts));
+
+	cl_assert_equal_i(0, counts.entry_count);
+
+	cl_repo_set_bool(repo, "core.autocrlf", false);
+
+	cl_git_pass(
+		git_status_foreach_ext(repo, &opts, cb_status__normal, &counts));
+
+	cl_assert_equal_i(0, counts.entry_count);
+
+	git_object_free(head_object);
+	git_reference_free(head);
+}
+
