@@ -157,6 +157,8 @@ static void hack_index(char *files[])
 		entry->uid  = statbuf.st_uid;
 		entry->gid  = statbuf.st_gid;
 		entry->file_size = statbuf.st_size;
+
+printf("mtime: %d %d\n", entry->mtime.seconds, entry->mtime.nanoseconds);
 	}
 
 	git_buf_free(&path);
@@ -224,9 +226,14 @@ static int merge_dirty_files(char *dirty_files[])
 
 static int merge_differently_filtered_files(char *files[])
 {
+/* TODO: once we correctly crlf filter on non-Win32, drop this ifdef */
+#ifdef GIT_WIN32
 	git_reference *head;
 	git_object *head_object;
+	git_status_list *statuslist;
+	const char *filename;
 	int error;
+	size_t i;
 
 	cl_git_pass(git_repository_head(&head, repo));
 	cl_git_pass(git_reference_peel(&head_object, head, GIT_OBJ_COMMIT));
@@ -242,11 +249,33 @@ static int merge_differently_filtered_files(char *files[])
 	 * files, showing them as dirty, the exact mechanism we're trying to avoid.)
 	 */
 
-	write_files(files);
-	hack_index(files);
+	cl_repo_set_bool(repo, "core.autocrlf", true);
 
-	repo_index->stamp.mtime = time(NULL) + 1;
-	cl_git_pass(git_index_write(repo_index));
+	for (i = 0, filename = files[i]; filename; filename = files[++i]) {
+		git_buf fullname = GIT_BUF_INIT;
+		git_oid original, badly_filtered;
+
+		cl_git_pass(git_buf_joinpath(&fullname, "merge-resolve", filename));
+		cl_git_pass(git_odb_hashfile(&original, fullname.ptr, GIT_OBJ_BLOB));
+
+
+		cl_must_pass(p_unlink(fullname.ptr));
+		cl_git_pass(git_reset(repo, head_object, GIT_RESET_HARD, NULL));
+
+		/* ensure that the files differ */
+		cl_git_pass(git_odb_hashfile(&badly_filtered, fullname.ptr, GIT_OBJ_BLOB));
+		cl_assert(!git_oid_equal(&original, &badly_filtered));
+	}
+
+	/* wait one second, then run status to update the racy
+	 * things that were written
+	 */
+
+	p_sleep(1);
+	cl_git_pass(git_status_list_new(&statuslist, repo, GIT_STATUS_OPT_UPDATE_INDEX));
+	git_status_list_free(statuslist);
+
+	cl_repo_set_bool(repo, "core.autocrlf", false);
 
 	error = merge_branch();
 
@@ -254,6 +283,9 @@ static int merge_differently_filtered_files(char *files[])
 	git_reference_free(head);
 
 	return error;
+#else
+	return 0;
+#endif
 }
 
 static int merge_staged_files(char *staged_files[])
