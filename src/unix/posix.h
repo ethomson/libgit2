@@ -52,4 +52,6 @@ extern char *p_realpath(const char *, char *);
 #define p_localtime_r(c, r) localtime_r(c, r)
 #define p_gmtime_r(c, r) gmtime_r(c, r)
 
+#define p_sleep(n) sleep(n)
+
 #endif

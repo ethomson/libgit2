@@ -55,4 +55,6 @@ extern int p_lstat_posixly(const char *filename, struct stat *buf);
 extern struct tm * p_localtime_r(const time_t *timer, struct tm *result);
 extern struct tm * p_gmtime_r(const time_t *timer, struct tm *result);
 
+#define p_sleep(n) Sleep((n) * 1000)
+
 #endif

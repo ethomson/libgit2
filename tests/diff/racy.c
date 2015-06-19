@@ -49,7 +49,7 @@ void test_diff_racy__write_index_just_after_file(void)
 	cl_git_pass(git_repository_index(&index, g_repo));
 	cl_git_pass(git_index_write(index));
 	/* The timestamp will be one second before we change the file */
-	sleep(1);
+	p_sleep(1);
 
 	cl_git_pass(git_buf_joinpath(&path, git_repository_workdir(g_repo), "A"));
 	cl_git_mkfile(path.ptr, "A");
