@@ -143,12 +143,12 @@ void test_diff_workdir__to_index_with_assume_unchanged(void)
 
 	cl_assert((iep = git_index_get_bypath(idx, "modified_file", 0)) != NULL);
 	memcpy(&ie, iep, sizeof(ie));
-	ie.flags |= GIT_IDXENTRY_VALID;
+	ie.flags |= GIT_IDXENTRY_ASSUME_UNCHANGED;
 	cl_git_pass(git_index_add(idx, &ie));
 
 	cl_assert((iep = git_index_get_bypath(idx, "file_deleted", 0)) != NULL);
 	memcpy(&ie, iep, sizeof(ie));
-	ie.flags |= GIT_IDXENTRY_VALID;
+	ie.flags |= GIT_IDXENTRY_ASSUME_UNCHANGED;
 	cl_git_pass(git_index_add(idx, &ie));
 
 	cl_git_pass(git_index_write(idx));
