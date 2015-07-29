@@ -86,9 +86,6 @@ struct git_iterator {
 	char *end;
 	git_vector *pathlist;
 	size_t pathlist_idx;
-	int (*path_cb)(
-		git_vector *, const char *, size_t, void *);
-	void *path_cb_data;
 	int (*prefixcomp)(const char *str, const char *prefix);
 	size_t stat_calls;
 	unsigned int flags;
