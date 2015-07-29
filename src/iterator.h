@@ -34,10 +34,15 @@ typedef enum {
 	GIT_ITERATOR_DONT_AUTOEXPAND  = (1u << 3),
 	/** convert precomposed unicode to decomposed unicode */
 	GIT_ITERATOR_PRECOMPOSE_UNICODE = (1u << 4),
-	/** include conflicts */
+	/** include conflicts (index iterator only) */
 	GIT_ITERATOR_INCLUDE_CONFLICTS = (1u << 5),
-	/** include assume-unchanged */
+	/** include assume-unchanged (workdir iterator only) */
 	GIT_ITERATOR_DONT_ASSUME_UNCHANGED = (1u << 6),
+	/** don't recurse into folders where the index only contains files that
+	 *  are marked assume-unchanged.  useful when not looking at untracked or
+	 *  ignored files. (workdir iterator only)
+	 */
+	GIT_ITERATOR_DONT_RECURSE_ASSUME_UNCHANGED = (1u << 7),
 } git_iterator_flag_t;
 
 
@@ -82,7 +87,7 @@ struct git_iterator {
 	git_vector *pathlist;
 	size_t pathlist_idx;
 	int (*path_cb)(
-		const char *, size_t, git_vector *, void *);
+		git_vector *, const char *, size_t, void *);
 	void *path_cb_data;
 	int (*prefixcomp)(const char *str, const char *prefix);
 	size_t stat_calls;

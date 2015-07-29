@@ -1274,6 +1274,11 @@ cleanup:
 	return error;
 }
 
+#define DIFF_CAN_SKIP_RECURSE_ASSUME_UNCHANGED(opts) \
+	((opts) && \
+	 !((opts)->flags & GIT_DIFF_INCLUDE_IGNORED) && \
+	 !((opts)->flags & GIT_DIFF_INCLUDE_UNTRACKED))
+
 #define DIFF_FROM_ITERATORS(MAKE_FIRST, FLAGS_FIRST, MAKE_SECOND, FLAGS_SECOND) do { \
 	git_iterator *a = NULL, *b = NULL; \
 	git_vector pathlist = GIT_VECTOR_INIT; \
@@ -1281,10 +1286,12 @@ cleanup:
 		git_pathspec_prefix(&opts->pathspec) : NULL; \
 	git_iterator_options a_opts = GIT_ITERATOR_OPTIONS_INIT, \
 		b_opts = GIT_ITERATOR_OPTIONS_INIT; \
-	a_opts.flags = FLAGS_FIRST; \
+	unsigned int additional_flags = DIFF_CAN_SKIP_RECURSE_ASSUME_UNCHANGED(opts) ? \
+		GIT_ITERATOR_DONT_RECURSE_ASSUME_UNCHANGED : 0; \
+	a_opts.flags = FLAGS_FIRST | additional_flags; \
 	a_opts.start = pfx; \
 	a_opts.end = pfx; \
-	b_opts.flags = FLAGS_SECOND; \
+	b_opts.flags = FLAGS_SECOND | additional_flags; \
 	b_opts.start = pfx; \
 	b_opts.end = pfx; \
 	GITERR_CHECK_VERSION(opts, GIT_DIFF_OPTIONS_VERSION, "git_diff_options"); \

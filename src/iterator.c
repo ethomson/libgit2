@@ -1114,7 +1114,7 @@ static int dirload_with_stat(
 	const char *start_stat,
 	const char *end_stat,
 	git_vector *pathlist,
-	int(*path_cb)(const char *, size_t, git_vector *, void *),
+	int (*path_cb)(git_vector *, const char *, size_t, void *),
 	void *path_cb_data)
 {
 	git_path_diriter diriter = GIT_PATH_DIRITER_INIT;
@@ -1169,7 +1169,7 @@ static int dirload_with_stat(
 		if (path_cb) {
 			int applied;
 
-			applied = path_cb(path, path_len, contents, path_cb_data);
+			applied = path_cb(contents, path, path_len, path_cb_data);
 
 			if (applied < 0) {
 				error = -1;
@@ -1677,52 +1677,104 @@ static void workdir_iterator__free(git_iterator *self)
 	git_ignore__free(&wi->ignores);
 }
 
+static int workdir_iterator__contents_from_index(
+	git_vector *contents,
+	const char *path,
+	size_t path_len,
+	git_index_entry *entry)
+{
+	fs_iterator_path_with_stat *ps;
+	size_t ps_size;
+
+	GITERR_CHECK_ALLOC_ADD(&ps_size, sizeof(fs_iterator_path_with_stat), path_len);
+	GITERR_CHECK_ALLOC_ADD(&ps_size, ps_size, 1);
+
+	ps = git__calloc(1, ps_size);
+	GITERR_CHECK_ALLOC(ps);
+
+	ps->path_len = path_len;
+	memcpy(ps->path, path, path_len);
+
+	ps->st.st_mode = entry->mode;
+	ps->st.st_mtime = entry->mtime.seconds;
+	ps->st.st_ctime = entry->ctime.seconds;
+	ps->st.st_dev = entry->dev;
+	ps->st.st_size = entry->file_size;
+	ps->st.st_uid = entry->uid;
+	ps->st.st_gid = entry->gid;
+	ps->st.st_ino = entry->ino;
+
+	if (git_vector_insert(contents, ps) < 0) {
+		git__free(ps);
+		return -1;
+	}
+
+	return 1;
+}
+
 static int workdir_iterator__path_cb(
-	const char *path, size_t path_len, git_vector *contents, void *data)
+	git_vector *contents, const char *path, size_t path_len, void *data)
 {
 	git_index_entry *entry;
 	workdir_iterator *wi = data;
-	size_t idx;
+	size_t start_idx, end_idx, i;
+	bool all_unchanged = true;
 	int error;
 
 	error = git_index_snapshot_find(
-		&idx, &wi->index_snapshot, wi->entry_srch, path, path_len, 0);
-	entry = git_vector_get(&wi->index_snapshot, idx);
+		&start_idx, &wi->index_snapshot, wi->entry_srch, path, path_len, 0);
+	entry = git_vector_get(&wi->index_snapshot, start_idx);
 
 	/* we have the entry in the index with assume unchanged, we can use the
-	 * data right out of the index.
+	 * data right out of the index (provided we're not looking for ignored or
+	 * untracked files.
 	 */
+	if ((wi->fi.base.flags & GIT_ITERATOR_DONT_RECURSE_ASSUME_UNCHANGED) == 0)
+		return 0;
+
 	if (error == 0 && (entry->flags & GIT_IDXENTRY_ASSUME_UNCHANGED)) {
-		fs_iterator_path_with_stat *ps;
-		size_t ps_size;
-
-		GITERR_CHECK_ALLOC_ADD(&ps_size, sizeof(fs_iterator_path_with_stat), path_len);
-		GITERR_CHECK_ALLOC_ADD(&ps_size, ps_size, 1);
-
-		ps = git__calloc(1, ps_size);
-		GITERR_CHECK_ALLOC(ps);
-
-		ps->path_len = path_len;
-		memcpy(ps->path, path, path_len);
-
-		ps->st.st_mode = entry->mode;
-		ps->st.st_mtime = entry->mtime.seconds;
-		ps->st.st_ctime = entry->ctime.seconds;
-		ps->st.st_dev = entry->dev;
-		ps->st.st_size = entry->file_size;
-		ps->st.st_uid = entry->uid;
-		ps->st.st_gid = entry->gid;
-		ps->st.st_ino = entry->ino;
-
-		if (git_vector_insert(contents, ps) < 0) {
-			git__free(ps);
+		if ((error = workdir_iterator__contents_from_index(
+				contents, path, path_len, entry)) < 0)
 			return -1;
-		}
 
 		return 1;
 	}
 
-	return 0;
+	/* see if the path that we're looking at represents a directory in the
+	 * index - if so, see if all the children (in the index) have the
+	 * assume unchanged bit.
+	 */
+	for (i = start_idx;
+		entry != NULL;
+		i++, entry = git_vector_get(&wi->index_snapshot, i)) {
+
+		if (wi->fi.base.prefixcomp(entry->path, path) != 0 ||
+			entry->path[path_len] != '/')
+			break;
+
+		if ((entry->flags & GIT_IDXENTRY_ASSUME_UNCHANGED) == 0) {
+			all_unchanged = false;
+			break;
+		}
+	}
+
+	end_idx = i;
+
+	if (!all_unchanged || start_idx == end_idx)
+		return 0;
+
+	/* everything beneath this path is assume unchanged.  include it
+	 * directly from the index and tell the fs iterator not to bother.
+	 */
+	for (i = start_idx; i <= end_idx; i++) {
+		entry = git_vector_get(&wi->index_snapshot, i);
+
+		if ((error = workdir_iterator__contents_from_index(
+			contents, path, path_len, entry)) < 0)
+			return -1;
+	}
+
+	return 1;
 }
 
 int git_iterator_for_workdir_ext(
@@ -1753,8 +1805,10 @@ int git_iterator_for_workdir_ext(
 	wi->fi.leave_dir_cb = workdir_iterator__leave_dir;
 	wi->fi.update_entry_cb = workdir_iterator__update_entry;
 
-	wi->fi.base.path_cb = workdir_iterator__path_cb;
-	wi->fi.base.path_cb_data = wi;
+	if ((wi->fi.base.flags & GIT_ITERATOR_DONT_ASSUME_UNCHANGED) == 0) {
+		wi->fi.base.path_cb = workdir_iterator__path_cb;
+		wi->fi.base.path_cb_data = wi;
+	}
 
 	if ((error = iterator__update_ignore_case((git_iterator *)wi, options ? options->flags : 0)) < 0 ||
 		(error = git_ignore__for_path(repo, ".gitignore", &wi->ignores)) < 0)
