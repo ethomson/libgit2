@@ -71,7 +71,6 @@ typedef enum {
 	ITERATOR_MATCH_INCLUDE = 1,
 	ITERATOR_MATCH_INCLUDE_IF_FILE = 2,
 	ITERATOR_MATCH_INCLUDE_IF_DIRECTORY = 3,
-	ITERATOR_MATCH_REPLACE = 4,
 } git_iterator_match_t;
 
 struct git_iterator {
@@ -82,8 +81,8 @@ struct git_iterator {
 	char *end;
 	git_vector *pathlist;
 	size_t pathlist_idx;
-	git_iterator_match_t (*path_cb)(
-		git_index_entry *, const char *, size_t, void *);
+	int (*path_cb)(
+		const char *, size_t, git_vector *, void *);
 	void *path_cb_data;
 	int (*prefixcomp)(const char *str, const char *prefix);
 	size_t stat_calls;

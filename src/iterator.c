@@ -1076,21 +1076,6 @@ static git_iterator_match_t dirload_pathlist_match(
 	return ITERATOR_MATCH_EXCLUDE;
 }
 
-static int dirload_replace(fs_iterator_path_with_stat *ps,
-	git_index_entry *replacement)
-{
-	memset(&ps->st, 0, sizeof(ps->st));
-	ps->st.st_mode = replacement->mode;
-	ps->st.st_mtime = replacement->mtime.seconds;
-	ps->st.st_ctime = replacement->ctime.seconds;
-	ps->st.st_dev = replacement->dev;
-	ps->st.st_size = replacement->file_size;
-	ps->st.st_uid = replacement->uid;
-	ps->st.st_gid = replacement->gid;
-	ps->st.st_ino = replacement->ino;
-	return 0;
-}
-
 static int dirload_stat(
 	fs_iterator_path_with_stat *ps,
 	git_path_diriter *diriter)
@@ -1129,8 +1114,7 @@ static int dirload_with_stat(
 	const char *start_stat,
 	const char *end_stat,
 	git_vector *pathlist,
-	git_iterator_match_t(*path_cb)(
-		git_index_entry *, const char *, size_t, void *),
+	int(*path_cb)(const char *, size_t, git_vector *, void *),
 	void *path_cb_data)
 {
 	git_path_diriter diriter = GIT_PATH_DIRITER_INIT;
@@ -1142,7 +1126,6 @@ static int dirload_with_stat(
 	fs_iterator_path_with_stat *ps;
 	size_t path_len, cmp_len, ps_size;
 	git_iterator_match_t pathlist_match = ITERATOR_MATCH_INCLUDE;
-	git_index_entry replace;
 	int error;
 
 	strncomp = (flags & GIT_PATH_DIR_IGNORE_CASE) != 0 ?
@@ -1176,13 +1159,26 @@ static int dirload_with_stat(
 		 * haven't stat'd yet to know if it's a file or a directory, so this
 		 * match for files like `foo` when we're looking for `foo/bar`
 		 */
-		if (pathlist &&
-				!(pathlist_match = dirload_pathlist_match(
+		if (pathlist && !(pathlist_match = dirload_pathlist_match(
 					pathlist, path, path_len, prefixcomp)))
 			continue;
 
-		if (path_cb && !(pathlist_match = path_cb(&replace, path, path_len, path_cb_data)))
-			continue;
+		/* if we have a callback, invoke it.  the callback may fill the
+		 * data for this path for us.
+		 */
+		if (path_cb) {
+			int applied;
+
+			applied = path_cb(path, path_len, contents, path_cb_data);
+
+			if (applied < 0) {
+				error = -1;
+				break;
+			}
+			
+			if (applied)
+				continue;
+		}
 
 		/* Make sure to append two bytes, one for the path's null
 		 * termination, one for a possible trailing '/' for folders.
@@ -1196,16 +1192,7 @@ static int dirload_with_stat(
 		ps->path_len = path_len;
 		memcpy(ps->path, path, path_len);
 
-		/* the path callback gave us the data to use (from assume-unchanged
-		 * or skip-worktree handling in the index */
-		if (pathlist_match == ITERATOR_MATCH_REPLACE)
-			error = dirload_replace(ps, &replace);
-
-		/* otherwise, we need to read the stat data from disk */
-		else
-			error = dirload_stat(ps, &diriter);
-
-		if (error == GIT_ENOTFOUND) {
+		if ((error = dirload_stat(ps, &diriter)) == GIT_ENOTFOUND) {
 			git__free(ps);
 			continue;
 		} else if (error < 0) {
@@ -1690,8 +1677,8 @@ static void workdir_iterator__free(git_iterator *self)
 	git_ignore__free(&wi->ignores);
 }
 
-static git_iterator_match_t workdir_iterator__path_cb(
-	git_index_entry *replace, const char *path, size_t path_len, void *data)
+static int workdir_iterator__path_cb(
+	const char *path, size_t path_len, git_vector *contents, void *data)
 {
 	git_index_entry *entry;
 	workdir_iterator *wi = data;
@@ -1702,18 +1689,40 @@ static git_iterator_match_t workdir_iterator__path_cb(
 		&idx, &wi->index_snapshot, wi->entry_srch, path, path_len, 0);
 	entry = git_vector_get(&wi->index_snapshot, idx);
 
-	if (error == 0 && entry->flags & GIT_IDXENTRY_ASSUME_UNCHANGED) {
-		memcpy(replace, entry, sizeof(git_index_entry));
-		return ITERATOR_MATCH_REPLACE;
-	} else if (error == 0) {
-		return ITERATOR_MATCH_INCLUDE;
+	/* we have the entry in the index with assume unchanged, we can use the
+	 * data right out of the index.
+	 */
+	if (error == 0 && (entry->flags & GIT_IDXENTRY_ASSUME_UNCHANGED)) {
+		fs_iterator_path_with_stat *ps;
+		size_t ps_size;
+
+		GITERR_CHECK_ALLOC_ADD(&ps_size, sizeof(fs_iterator_path_with_stat), path_len);
+		GITERR_CHECK_ALLOC_ADD(&ps_size, ps_size, 1);
+
+		ps = git__calloc(1, ps_size);
+		GITERR_CHECK_ALLOC(ps);
+
+		ps->path_len = path_len;
+		memcpy(ps->path, path, path_len);
+
+		ps->st.st_mode = entry->mode;
+		ps->st.st_mtime = entry->mtime.seconds;
+		ps->st.st_ctime = entry->ctime.seconds;
+		ps->st.st_dev = entry->dev;
+		ps->st.st_size = entry->file_size;
+		ps->st.st_uid = entry->uid;
+		ps->st.st_gid = entry->gid;
+		ps->st.st_ino = entry->ino;
+
+		if (git_vector_insert(contents, ps) < 0) {
+			git__free(ps);
+			return -1;
+		}
+
+		return 1;
 	}
 
-	/* TODO: if we're not including untracked or ignored, and this is
-	 * a directory, then we can look at the assume unchanged bit of the
-	 * children to determine whether to recurse or not
-	 */
-	return ITERATOR_MATCH_INCLUDE;
+	return 0;
 }
 
 int git_iterator_for_workdir_ext(
