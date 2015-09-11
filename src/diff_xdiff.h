@@ -8,15 +8,15 @@
 #define INCLUDE_diff_xdiff_h__
 
 #include "diff.h"
-#include "diff_patch.h"
 #include "xdiff/xdiff.h"
+#include "patch_diff.h"
 
-/* A git_xdiff_output is a git_diff_output with extra fields necessary
+/* A git_xdiff_output is a git_patch_diff_output with extra fields necessary
  * to use libxdiff.  Calling git_xdiff_init() will set the diff_cb field
  * of the output to use xdiff to generate the diffs.
  */
 typedef struct {
-	git_diff_output output;
+	git_patch_diff_output output;
 
 	xdemitconf_t config;
 	xpparam_t    params;

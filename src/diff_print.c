@@ -6,7 +6,8 @@
  */
 #include "common.h"
 #include "diff.h"
-#include "diff_patch.h"
+#include "diff_file.h"
+#include "patch_diff.h"
 #include "fileops.h"
 #include "zstream.h"
 #include "blob.h"
@@ -87,7 +88,7 @@ static int diff_print_info_init_fromdiff(
 static int diff_print_info_init_frompatch(
 	diff_print_info *pi,
 	git_buf *out,
-	git_patch *patch,
+	git_patch_diff *patch,
 	git_diff_format_t format,
 	git_diff_line_cb cb,
 	void *payload)
