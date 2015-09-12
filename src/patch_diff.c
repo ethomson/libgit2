@@ -434,7 +434,7 @@ int git_diff_foreach(
 					error = patch_diff_generate(&patch, &xo.output);
 		}
 
-		git_patch_free(&patch);
+		git_patch_free(&patch.base);
 
 		if (error)
 			break;
@@ -581,7 +581,7 @@ static int diff_from_sources(
 
 	error = patch_diff_from_sources(&pd, &xo, oldsrc, newsrc, opts);
 
-	git_patch_free(&pd.patch);
+	git_patch_free(&pd.patch.base);
 
 	return error;
 }
@@ -772,7 +772,7 @@ int git_patch_from_diff(
 	}
 
 	if (error || !patch_ptr)
-		git_patch_free(patch);
+		git_patch_free(&patch->base);
 	else
 		*patch_ptr = &patch->base;
 

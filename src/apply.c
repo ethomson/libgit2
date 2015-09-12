@@ -329,7 +329,7 @@ int git_apply__patch(
 	*mode_out = 0;
 
 	if (patch->delta->status != GIT_DELTA_DELETED) {
-		git_diff_file *newfile = git_patch_newfile(patch);
+		const git_diff_file *newfile = patch->newfile(patch);
 
 		filename = git__strdup(newfile->path);
 		mode = newfile->mode ?

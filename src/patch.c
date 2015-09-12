@@ -1,4 +1,5 @@
 #include "git2/patch.h"
+#include "diff.h"
 #include "patch.h"
 
 size_t git_patch_size(

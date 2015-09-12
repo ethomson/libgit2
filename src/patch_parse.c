@@ -10,7 +10,7 @@ typedef struct {
 
 	git_diff_file old_file;
 	git_diff_file new_file;
-} git_patch_parse;
+} git_patch_parsed;
 
 typedef struct {
 	const char *content;
@@ -138,12 +138,14 @@ static int parse_header_path(char **out, patch_parse_ctx *ctx)
 	return error;
 }
 
-static int parse_header_git_oldpath(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_git_oldpath(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	return parse_header_path((char **)&patch->old_file.path, ctx);
 }
 
-static int parse_header_git_newpath(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_git_newpath(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	return parse_header_path((char **)&patch->new_file.path, ctx);
 }
@@ -194,7 +196,8 @@ static int parse_header_oid(
 	return 0;
 }
 
-static int parse_header_git_index(git_patch *patch, patch_parse_ctx *ctx)
+static int parse_header_git_index(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	/*
 	* TODO: we read the prefix provided in the diff into the delta's id
@@ -202,9 +205,9 @@ static int parse_header_git_index(git_patch *patch, patch_parse_ctx *ctx)
 	*/
 	size_t oid_len, nid_len;
 
-	if (parse_header_oid(&patch->delta->old_file.id, &oid_len, ctx) < 0 ||
+	if (parse_header_oid(&patch->base.delta->old_file.id, &oid_len, ctx) < 0 ||
 		parse_advance_expected(ctx, "..", 2) < 0 ||
-		parse_header_oid(&patch->delta->new_file.id, &nid_len, ctx) < 0)
+		parse_header_oid(&patch->base.delta->new_file.id, &nid_len, ctx) < 0)
 		return -1;
 
 	if (ctx->line_len > 0 && ctx->line[0] == ' ') {
@@ -215,28 +218,30 @@ static int parse_header_git_index(git_patch *patch, patch_parse_ctx *ctx)
 		if (parse_header_mode(&mode, ctx) < 0)
 			return -1;
 
-		if (!patch->delta->new_file.mode)
-			patch->delta->new_file.mode = mode;
+		if (!patch->base.delta->new_file.mode)
+			patch->base.delta->new_file.mode = mode;
 
-		if (!patch->delta->old_file.mode)
-			patch->delta->old_file.mode = mode;
+		if (!patch->base.delta->old_file.mode)
+			patch->base.delta->old_file.mode = mode;
 	}
 
 	return 0;
 }
 
-static int parse_header_git_oldmode(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_git_oldmode(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	return parse_header_mode(&patch->old_file.mode, ctx);
 }
 
-static int parse_header_git_newmode(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_git_newmode(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	return parse_header_mode(&patch->new_file.mode, ctx);
 }
 
 static int parse_header_git_deletedfilemode(
-	git_patch_parse *patch,
+	git_patch_parsed *patch,
 	patch_parse_ctx *ctx)
 {
 	git__free((char *)patch->old_file.path);
@@ -248,7 +253,7 @@ static int parse_header_git_deletedfilemode(
 }
 
 static int parse_header_git_newfilemode(
-	git_patch_parse *patch,
+	git_patch_parsed *patch,
 	patch_parse_ctx *ctx)
 {
 	git__free((char *)patch->new_file.path);
@@ -302,7 +307,8 @@ static int parse_header_rename(
 	return 0;
 }
 
-static int parse_header_renamefrom(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_renamefrom(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	patch->base.delta->status |= GIT_DELTA_RENAMED;
 
@@ -312,7 +318,8 @@ static int parse_header_renamefrom(git_patch_parse *patch, patch_parse_ctx *ctx)
 		ctx);
 }
 
-static int parse_header_renameto(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_renameto(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	patch->base.delta->status |= GIT_DELTA_RENAMED;
 
@@ -343,7 +350,8 @@ static int parse_header_percent(uint16_t *out, patch_parse_ctx *ctx)
 	return 0;
 }
 
-static int parse_header_similarity(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_similarity(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	if (parse_header_percent(&patch->base.delta->similarity, ctx) < 0)
 		return parse_err("invalid similarity percentage at line %d",
@@ -352,7 +360,8 @@ static int parse_header_similarity(git_patch_parse *patch, patch_parse_ctx *ctx)
 	return 0;
 }
 
-static int parse_header_dissimilarity(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_dissimilarity(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	uint16_t dissimilarity;
 
@@ -367,7 +376,7 @@ static int parse_header_dissimilarity(git_patch_parse *patch, patch_parse_ctx *c
 
 typedef struct {
 	const char *str;
-	int(*fn)(git_patch_parse *, patch_parse_ctx *);
+	int(*fn)(git_patch_parsed *, patch_parse_ctx *);
 } header_git_op;
 
 static const header_git_op header_git_ops[] = {
@@ -389,7 +398,7 @@ static const header_git_op header_git_ops[] = {
 };
 
 static int parse_header_git(
-	git_patch_parse *patch,
+	git_patch_parsed *patch,
 	patch_parse_ctx *ctx)
 {
 	size_t i;
@@ -530,7 +539,7 @@ fail:
 }
 
 static int parse_hunk_body(
-	git_patch_parse *patch,
+	git_patch_parsed *patch,
 	git_patch_hunk *hunk,
 	patch_parse_ctx *ctx)
 {
@@ -623,7 +632,8 @@ done:
 	return error;
 }
 
-static int parse_header_traditional(git_patch_parse *patch, patch_parse_ctx *ctx)
+static int parse_header_traditional(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	GIT_UNUSED(patch);
 	GIT_UNUSED(ctx);
@@ -631,8 +641,8 @@ static int parse_header_traditional(git_patch_parse *patch, patch_parse_ctx *ctx
 	return 1;
 }
 
-static int parse_patch_header(
-	git_patch_parse *patch,
+static int parsed_patch_header(
+	git_patch_parsed *patch,
 	patch_parse_ctx *ctx)
 {
 	int error = 0;
@@ -702,7 +712,7 @@ done:
 	return error;
 }
 
-static int parse_patch_binary_side(
+static int parsed_patch_binary_side(
 	git_diff_binary_file *binary,
 	patch_parse_ctx *ctx)
 {
@@ -782,8 +792,8 @@ done:
 	return error;
 }
 
-static int parse_patch_binary(
-	git_patch *patch,
+static int parsed_patch_binary(
+	git_patch_parsed *patch,
 	patch_parse_ctx *ctx)
 {
 	int error;
@@ -793,22 +803,25 @@ static int parse_patch_binary(
 		return parse_err("corrupt git binary header at line %d", ctx->line_num);
 
 	/* parse old->new binary diff */
-	if ((error = parse_patch_binary_side(&patch->binary.new_file, ctx)) < 0)
+	if ((error = parsed_patch_binary_side(
+			&patch->base.binary.new_file, ctx)) < 0)
 		return error;
 
 	if (parse_advance_nl(ctx) < 0)
-		return parse_err("corrupt git binary separator at line %d", ctx->line_num);
+		return parse_err("corrupt git binary separator at line %d",
+			ctx->line_num);
 
 	/* parse new->old binary diff */
-	if ((error = parse_patch_binary_side(&patch->binary.old_file, ctx)) < 0)
+	if ((error = parsed_patch_binary_side(
+			&patch->base.binary.old_file, ctx)) < 0)
 		return error;
 
-	patch->delta->flags |= GIT_DIFF_FLAG_BINARY;
+	patch->base.delta->flags |= GIT_DIFF_FLAG_BINARY;
 	return 0;
 }
 
-static int parse_patch_hunks(
-	git_patch *patch,
+static int parsed_patch_hunks(
+	git_patch_parsed *patch,
 	patch_parse_ctx *ctx)
 {
 	git_patch_hunk *hunk;
@@ -816,12 +829,12 @@ static int parse_patch_hunks(
 
 	for (; ctx->line_len > 4 && memcmp(ctx->line, "@@ -", 4) == 0; ) {
 
-		hunk = git_array_alloc(patch->hunks);
+		hunk = git_array_alloc(patch->base.hunks);
 		GITERR_CHECK_ALLOC(hunk);
 
 		memset(hunk, 0, sizeof(git_patch_hunk));
 
-		hunk->line_start = git_array_size(patch->lines);
+		hunk->line_start = git_array_size(patch->base.lines);
 		hunk->line_count = 0;
 
 		if ((error = parse_hunk_header(hunk, ctx)) < 0 ||
@@ -833,18 +846,19 @@ done:
 	return error;
 }
 
-static int parse_patch_body(git_patch *patch, patch_parse_ctx *ctx)
+static int parsed_patch_body(
+	git_patch_parsed *patch, patch_parse_ctx *ctx)
 {
 	if (ctx->line_len >= 16 && memcmp(ctx->line, "GIT binary patch", 16) == 0)
-		return parse_patch_binary(patch, ctx);
+		return parsed_patch_binary(patch, ctx);
 
 	else if (ctx->line_len >= 4 && memcmp(ctx->line, "@@ -", 4) == 0)
-		return parse_patch_hunks(patch, ctx);
+		return parsed_patch_hunks(patch, ctx);
 
 	return 0;
 }
 
-static int check_patch(git_patch_parse *patch)
+static int check_patch(git_patch_parsed *patch)
 {
 	if (!patch->old_file.path && patch->base.delta->status != GIT_DELTA_ADDED)
 		return parse_err("missing old file path");
@@ -866,19 +880,34 @@ static int check_patch(git_patch_parse *patch)
 	return 0;
 }
 
+static const git_diff_file *parsed_patch_newfile(git_patch *p)
+{
+	git_patch_parsed *patch = (git_patch_parsed *)p;
+	return &patch->new_file;
+}
+
+static const git_diff_file *parsed_patch_oldfile(git_patch *p)
+{
+	git_patch_parsed *patch = (git_patch_parsed *)p;
+	return &patch->old_file;
+}
+
 int git_patch_from_patchfile(
 	git_patch **out,
 	const char *content,
 	size_t content_len)
 {
 	patch_parse_ctx ctx = { 0 };
-	git_patch_parse *patch;
+	git_patch_parsed *patch;
 	int error = 0;
 
 	*out = NULL;
 
-	patch = git__calloc(1, sizeof(git_patch_parse));
+	patch = git__calloc(1, sizeof(git_patch_parsed));
 	GITERR_CHECK_ALLOC(patch);
+
+	patch->base.newfile = parsed_patch_newfile;
+	patch->base.oldfile = parsed_patch_oldfile;
 
 	patch->base.delta = git__calloc(1, sizeof(git_diff_delta));
 	patch->base.delta->status = GIT_DELTA_MODIFIED;
@@ -887,8 +916,8 @@ int git_patch_from_patchfile(
 	ctx.content_len = content_len;
 	ctx.remain = content_len;
 
-	if ((error = parse_patch_header(patch, &ctx)) < 0 ||
-		(error = parse_patch_body(patch, &ctx)) < 0 ||
+	if ((error = parsed_patch_header(patch, &ctx)) < 0 ||
+		(error = parsed_patch_body(patch, &ctx)) < 0 ||
 		(error = check_patch(patch)) < 0)
 		goto done;
 
