@@ -921,6 +921,7 @@ int git_patch_from_patchfile(
 		(error = check_patch(patch)) < 0)
 		goto done;
 
+	GIT_REFCOUNT_INC(patch);
 	*out = &patch->base;
 
 done:

@@ -34,6 +34,14 @@ struct git_patch {
 	void (*free_fn)(git_patch *patch);
 };
 
+extern int git_patch__invoke_callbacks(
+	git_patch *patch,
+	git_diff_file_cb file_cb,
+	git_diff_binary_cb binary_cb,
+	git_diff_hunk_cb hunk_cb,
+	git_diff_line_cb line_cb,
+	void *payload);
+
 extern int git_patch_line_stats(
 	size_t *total_ctxt,
 	size_t *total_adds,
@@ -41,6 +49,5 @@ extern int git_patch_line_stats(
 	const git_patch *patch);
 
 extern void git_patch_free(git_patch *patch);
-
 
 #endif

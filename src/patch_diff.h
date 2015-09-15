@@ -28,7 +28,6 @@ struct git_patch_diff {
 
 	git_diff *diff; /* for refcount purposes, maybe NULL for blob diffs */
 	git_diff_options diff_opts;
-	git_diff_delta *delta;
 	size_t delta_index;
 	git_diff_file_content ofile;
 	git_diff_file_content nfile;
@@ -42,14 +41,6 @@ extern git_diff_driver *git_patch_diff_driver(git_patch_diff *);
 
 extern void git_patch_diff_old_data(char **, size_t *, git_patch_diff *);
 extern void git_patch_diff_new_data(char **, size_t *, git_patch_diff *);
-
-extern int git_patch__invoke_callbacks(
-	git_patch *patch,
-	git_diff_file_cb file_cb,
-	git_diff_binary_cb binary_cb,
-	git_diff_hunk_cb hunk_cb,
-	git_diff_line_cb line_cb,
-	void *payload);
 
 typedef struct git_patch_diff_output git_patch_diff_output;
 
