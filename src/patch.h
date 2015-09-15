@@ -20,6 +20,10 @@ typedef struct git_patch_hunk {
 struct git_patch {
 	git_refcount rc;
 
+	git_repository *repo; /* may be null */
+
+	git_diff_options diff_opts;
+
 	git_diff_delta *delta;
 	git_diff_binary binary;
 	git_array_t(git_patch_hunk) hunks;

@@ -27,7 +27,6 @@ struct git_patch_diff {
 	struct git_patch base;
 
 	git_diff *diff; /* for refcount purposes, maybe NULL for blob diffs */
-	git_diff_options diff_opts;
 	size_t delta_index;
 	git_diff_file_content ofile;
 	git_diff_file_content nfile;

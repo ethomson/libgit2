@@ -45,8 +45,8 @@ static void patch_diff_free(git_patch *p)
 
 	git_pool_clear(&patch->flattened);
 
-	git__free((char *)patch->diff_opts.old_prefix);
-	git__free((char *)patch->diff_opts.new_prefix);
+	git__free((char *)patch->base.diff_opts.old_prefix);
+	git__free((char *)patch->base.diff_opts.new_prefix);
 
 	if (patch->flags & GIT_PATCH_DIFF_ALLOCATED)
 		git__free(patch);
@@ -113,12 +113,13 @@ static int patch_diff_init(
 
 	memset(patch, 0, sizeof(*patch));
 
-	patch->diff  = diff;
+	patch->diff = diff;
+	patch->base.repo = diff->repo;
 	patch->base.delta = git_vector_get(&diff->deltas, delta_index);
 	patch->delta_index = delta_index;
 
 	if ((error = patch_diff_normalize_options(
-			&patch->diff_opts, &diff->opts)) < 0 ||
+			&patch->base.diff_opts, &diff->opts)) < 0 ||
 		(error = git_diff_file_content__init_from_diff(
 			&patch->ofile, diff, patch->base.delta, true)) < 0 ||
 		(error = git_diff_file_content__init_from_diff(
@@ -151,7 +152,7 @@ static int patch_diff_alloc_from_diff(
 
 GIT_INLINE(bool) should_skip_binary(git_patch_diff *patch, git_diff_file *file)
 {
-	if ((patch->diff_opts.flags & GIT_DIFF_SHOW_BINARY) != 0)
+	if ((patch->base.diff_opts.flags & GIT_DIFF_SHOW_BINARY) != 0)
 		return false;
 
 	return (file->flags & GIT_DIFF_FLAG_BINARY) != 0;
@@ -169,7 +170,7 @@ static bool patch_diff_diffable(git_patch_diff *patch)
 	 * file data itself.
 	 */
 	if ((patch->base.delta->flags & GIT_DIFF_FLAG_BINARY) != 0 &&
-		(patch->diff_opts.flags & GIT_DIFF_SHOW_BINARY) == 0) {
+		(patch->base.diff_opts.flags & GIT_DIFF_SHOW_BINARY) == 0) {
 		olen = (size_t)patch->ofile.file->size;
 		nlen = (size_t)patch->nfile.file->size;
 	} else {
@@ -212,13 +213,13 @@ static int patch_diff_load(git_patch_diff *patch, git_patch_diff_output *output)
 	 */
 	if (patch->ofile.src == GIT_ITERATOR_TYPE_WORKDIR) {
 		if ((error = git_diff_file_content__load(
-				&patch->ofile, &patch->diff_opts)) < 0 ||
+				&patch->ofile, &patch->base.diff_opts)) < 0 ||
 			should_skip_binary(patch, patch->ofile.file))
 			goto cleanup;
 	}
 	if (patch->nfile.src == GIT_ITERATOR_TYPE_WORKDIR) {
 		if ((error = git_diff_file_content__load(
-				&patch->nfile, &patch->diff_opts)) < 0 ||
+				&patch->nfile, &patch->base.diff_opts)) < 0 ||
 			should_skip_binary(patch, patch->nfile.file))
 			goto cleanup;
 	}
@@ -226,13 +227,13 @@ static int patch_diff_load(git_patch_diff *patch, git_patch_diff_output *output)
 	/* once workdir has been tried, load other data as needed */
 	if (patch->ofile.src != GIT_ITERATOR_TYPE_WORKDIR) {
 		if ((error = git_diff_file_content__load(
-				&patch->ofile, &patch->diff_opts)) < 0 ||
+				&patch->ofile, &patch->base.diff_opts)) < 0 ||
 			should_skip_binary(patch, patch->ofile.file))
 			goto cleanup;
 	}
 	if (patch->nfile.src != GIT_ITERATOR_TYPE_WORKDIR) {
 		if ((error = git_diff_file_content__load(
-				&patch->nfile, &patch->diff_opts)) < 0 ||
+				&patch->nfile, &patch->base.diff_opts)) < 0 ||
 			should_skip_binary(patch, patch->nfile.file))
 			goto cleanup;
 	}
@@ -512,7 +513,7 @@ static int patch_diff_from_sources(
 	git_diff_file *lfile = &pd->delta.old_file, *rfile = &pd->delta.new_file;
 	git_diff_file_content *ldata = &pd->patch.ofile, *rdata = &pd->patch.nfile;
 
-	if ((error = patch_diff_normalize_options(&pd->patch.diff_opts, opts)) < 0)
+	if ((error = patch_diff_normalize_options(&pd->patch.base.diff_opts, opts)) < 0)
 		return error;
 
 	if (opts && (opts->flags & GIT_DIFF_REVERSE) != 0) {
