@@ -5,11 +5,9 @@
 #define parse_err(...) \
 	( giterr_set(GITERR_PATCH, __VA_ARGS__), -1 )
 
+/* TODO: remove this, just use git_patch */
 typedef struct {
 	git_patch base;
-
-	git_diff_file old_file;
-	git_diff_file new_file;
 } git_patch_parsed;
 
 typedef struct {
@@ -313,7 +311,7 @@ static int parse_header_renamefrom(
 	patch->base.delta->status |= GIT_DELTA_RENAMED;
 
 	return parse_header_rename(
-		(char **)patch->base.delta->old_file.path,
+		(char **)&patch->base.delta->old_file.path,
 		&ctx->header_old_path,
 		ctx);
 }
