@@ -126,6 +126,21 @@ git_repository *setup_fixture_submod2(void)
 	return repo;
 }
 
+git_repository *setup_fixture_super(void)
+{
+	git_repository *repo = cl_git_sandbox_init("super");
+
+	cl_fixture_sandbox("sub.git");
+
+	rewrite_gitmodules(git_repository_workdir(repo));
+
+	cl_set_cleanup(cleanup_fixture_submodules, "sub.git");
+
+	cl_git_pass(git_repository_reinit_filesystem(repo, 1));
+
+	return repo;
+}
+
 git_repository *setup_fixture_submodule_simple(void)
 {
 	git_repository *repo = cl_git_sandbox_init("submodule_simple");

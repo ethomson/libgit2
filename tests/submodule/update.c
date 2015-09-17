@@ -390,3 +390,16 @@ void test_submodule_update__can_force_update(void)
 	git_object_free(branch_commit);
 	git_reference_free(branch_reference);
 }
+
+void test_submodule_update__submodule_is_not_reserved_pathname(void)
+{
+	git_submodule *sm;
+	git_submodule_update_options update_options = GIT_SUBMODULE_UPDATE_OPTIONS_INIT;
+
+	g_repo = setup_fixture_super();
+
+	cl_git_pass(git_submodule_lookup(&sm, g_repo, "sub"));
+	cl_git_pass(git_submodule_update(sm, 1, &update_options));
+
+	git_submodule_free(sm);
+}

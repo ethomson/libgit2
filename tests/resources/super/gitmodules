@@ -1,0 +1,3 @@
+[submodule "sub"]
+	path = sub
+	url = c:\\git\\libgit2-3\\tests\\resources\\sub.git
