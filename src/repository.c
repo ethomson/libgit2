@@ -908,12 +908,20 @@ bool git_repository__reserved_names(
 			buf->size = git_repository__reserved_names_win32[i].size;
 		}
 
-		/* Try to add any repo-specific reserved names */
+		/* Try to add any repo-specific reserved names - the gitlink file
+		 * within a submodule or the repository (if the repository directory
+		 * is beneath the workdir).  These are typically `.git`, but should
+		 * be protected in case they are not.
+		 */
 		if (!repo->is_bare) {
-			const char *reserved_path = repo->path_gitlink ?
-				repo->path_gitlink : repo->path_repository;
+			if (repo->path_gitlink &&
+				reserved_names_add8dot3(repo, repo->path_gitlink) < 0)
+				goto on_error;
 
-			if (reserved_names_add8dot3(repo, reserved_path) < 0)
+			if (repo->path_repository &&
+				git_path_equal_or_prefixed(
+					repo->path_repository, repo->workdir, NULL) &&
+				reserved_names_add8dot3(repo, repo->path_repository) < 0)
 				goto on_error;
 		}
 	}
