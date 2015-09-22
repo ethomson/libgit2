@@ -281,7 +281,7 @@ typedef enum {
  */
 typedef struct {
 	git_oid     id;
-	size_t      id_abbrev;
+	int         id_abbrev;
 	const char *path;
 	git_off_t   size;
 	uint32_t    flags;
