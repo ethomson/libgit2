@@ -9,6 +9,7 @@
 #include "git2/attr.h"
 
 #include "diff.h"
+#include "diff_generate.h"
 #include "diff_driver.h"
 #include "strmap.h"
 #include "map.h"
