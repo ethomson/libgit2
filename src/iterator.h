@@ -297,8 +297,7 @@ extern int git_iterator_advance_over_with_status(
 
 /**
  * Retrieve the index stored in the iterator.
- *
- * Only implemented for the workdir iterator
+ * Note that the index is *not* refcounted and should not be freed.
  */
 extern int git_iterator_index(git_index **out, git_iterator *iter);
 

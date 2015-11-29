@@ -224,18 +224,19 @@ static int iterator__update_ignore_case(
 	git_iterator_flag_t flags)
 {
 	bool ignore_case;
-	int error;
 
-	if ((flags & GIT_ITERATOR_IGNORE_CASE) != 0)
+	if ((flags & GIT_ITERATOR_IGNORE_CASE) != 0) {
 		ignore_case = true;
-	else if ((flags & GIT_ITERATOR_DONT_IGNORE_CASE) != 0)
+	} else if ((flags & GIT_ITERATOR_DONT_IGNORE_CASE) != 0) {
 		ignore_case = false;
-	else {
+	} else {
 		git_index *index;
+		int error;
 
-		if ((error = git_repository_index__weakptr(&index, iter->repo)) < 0)
+		if ((error = git_iterator_index(&index, iter)) < 0)
 			return error;
 
+		assert(index);
 		ignore_case = (index->ignore_case == 1);
 	}
 
@@ -1833,6 +1834,8 @@ int git_iterator_for_workdir_ext(
 	wi->fi.leave_dir_cb = workdir_iterator__leave_dir;
 	wi->fi.update_entry_cb = workdir_iterator__update_entry;
 
+	wi->index = index;
+
 	if ((error = iterator__update_ignore_case((git_iterator *)wi, options ? options->flags : 0)) < 0 ||
 		(error = git_ignore__for_path(repo, ".gitignore", &wi->ignores)) < 0)
 	{
@@ -1843,7 +1846,6 @@ int git_iterator_for_workdir_ext(
 	if (tree && (error = git_object_dup((git_object **)&wi->tree, (git_object *)tree)) < 0)
 		return error;
 
-	wi->index = index;
 	if (index && (error = git_index_snapshot_new(&wi->index_snapshot, index)) < 0) {
 		git_iterator_free((git_iterator *)wi);
 		return error;
@@ -2018,14 +2020,20 @@ int git_iterator_current_workdir_path(git_buf **path, git_iterator *iter)
 
 int git_iterator_index(git_index **out, git_iterator *iter)
 {
-	workdir_iterator *wi = (workdir_iterator *)iter;
+	int error = 0;
 
-	if (iter->type != GIT_ITERATOR_TYPE_WORKDIR)
-		*out = NULL;
+	*out = NULL;
 
-	*out = wi->index;
+	if (iter->type == GIT_ITERATOR_TYPE_WORKDIR && ((workdir_iterator *)iter)->index)
+		*out = ((workdir_iterator *)iter)->index;
+	else if (iter->type == GIT_ITERATOR_TYPE_INDEX)
+		*out = ((index_iterator *)iter)->index;
+	else if (iter->repo)
+		error = git_repository_index__weakptr(out, iter->repo);
+	else
+		error = GIT_ENOTFOUND;
 
-	return 0;
+	return error;
 }
 
 int git_iterator_advance_over_with_status(
