@@ -61,6 +61,8 @@ typedef struct {
 	char *pfx;
 	git_index *index;
 	git_pool pool;
+	size_t counts[CHECKOUT_ACTION__MAX+1];
+	int *actions;
 	git_vector removes;
 	git_vector remove_conflicts;
 	git_vector update_conflicts;
@@ -1246,8 +1248,6 @@ static int checkout_verify_paths(
 }
 
 static int checkout_get_actions(
-	uint32_t **actions_ptr,
-	size_t **counts_ptr,
 	checkout_data *data,
 	git_iterator *workdir)
 {
@@ -1256,8 +1256,7 @@ static int checkout_get_actions(
 	git_vector pathspec = GIT_VECTOR_INIT, *deltas;
 	git_pool pathpool;
 	git_diff_delta *delta;
-	size_t i, *counts = NULL;
-	uint32_t *actions = NULL;
+	size_t i;
 
 	git_pool_init(&pathpool, 1);
 
@@ -1267,73 +1266,63 @@ static int checkout_get_actions(
 
 	if ((error = git_iterator_current(&wditem, workdir)) < 0 &&
 		error != GIT_ITEROVER)
-		goto fail;
+		goto done;
 
 	deltas = &data->diff->deltas;
 
-	*counts_ptr = counts = git__calloc(CHECKOUT_ACTION__MAX+1, sizeof(size_t));
-	*actions_ptr = actions = git__calloc(
+	data->actions = git__calloc(
 		deltas->length ? deltas->length : 1, sizeof(uint32_t));
-	if (!counts || !actions) {
-		error = -1;
-		goto fail;
-	}
 
 	git_vector_foreach(deltas, i, delta) {
 		if ((error = checkout_action(&act, data, delta, workdir, &wditem, &pathspec)) == 0)
 			error = checkout_verify_paths(data->repo, act, delta);
 
 		if (error != 0)
-			goto fail;
+			goto done;
 
-		actions[i] = act;
+		data->actions[i] = act;
 
 		if (act & CHECKOUT_ACTION__REMOVE)
-			counts[CHECKOUT_ACTION__REMOVE]++;
+			data->counts[CHECKOUT_ACTION__REMOVE]++;
 		if (act & CHECKOUT_ACTION__UPDATE_BLOB)
-			counts[CHECKOUT_ACTION__UPDATE_BLOB]++;
+			data->counts[CHECKOUT_ACTION__UPDATE_BLOB]++;
 		if (act & CHECKOUT_ACTION__UPDATE_SUBMODULE)
-			counts[CHECKOUT_ACTION__UPDATE_SUBMODULE]++;
+			data->counts[CHECKOUT_ACTION__UPDATE_SUBMODULE]++;
 		if (act & CHECKOUT_ACTION__CONFLICT)
-			counts[CHECKOUT_ACTION__CONFLICT]++;
+			data->counts[CHECKOUT_ACTION__CONFLICT]++;
 	}
 
 	error = checkout_remaining_wd_items(data, workdir, wditem, &pathspec);
 	if (error)
-		goto fail;
+		goto done;
 
-	counts[CHECKOUT_ACTION__REMOVE] += data->removes.length;
+	data->counts[CHECKOUT_ACTION__REMOVE] += data->removes.length;
 
-	if (counts[CHECKOUT_ACTION__CONFLICT] > 0 &&
+	if (data->counts[CHECKOUT_ACTION__CONFLICT] > 0 &&
 		(data->strategy & GIT_CHECKOUT_ALLOW_CONFLICTS) == 0)
 	{
 		giterr_set(GITERR_CHECKOUT, "%"PRIuZ" %s checkout",
-			counts[CHECKOUT_ACTION__CONFLICT],
-			counts[CHECKOUT_ACTION__CONFLICT] == 1 ?
+			data->counts[CHECKOUT_ACTION__CONFLICT],
+			data->counts[CHECKOUT_ACTION__CONFLICT] == 1 ?
 			"conflict prevents" : "conflicts prevent");
 		error = GIT_ECONFLICT;
-		goto fail;
+		goto done;
 	}
-
 
 	if ((error = checkout_get_remove_conflicts(data, workdir, &pathspec)) < 0 ||
 		(error = checkout_get_update_conflicts(data, workdir, &pathspec)) < 0)
-		goto fail;
+		goto done;
 
-	counts[CHECKOUT_ACTION__REMOVE_CONFLICT] = git_vector_length(&data->remove_conflicts);
-	counts[CHECKOUT_ACTION__UPDATE_CONFLICT] = git_vector_length(&data->update_conflicts);
+	data->counts[CHECKOUT_ACTION__REMOVE_CONFLICT] = git_vector_length(&data->remove_conflicts);
+	data->counts[CHECKOUT_ACTION__UPDATE_CONFLICT] = git_vector_length(&data->update_conflicts);
 
-	git_pathspec__vfree(&pathspec);
-	git_pool_clear(&pathpool);
+	data->total_steps = data->counts[CHECKOUT_ACTION__REMOVE] +
+		data->counts[CHECKOUT_ACTION__REMOVE_CONFLICT] +
+		data->counts[CHECKOUT_ACTION__UPDATE_BLOB] +
+		data->counts[CHECKOUT_ACTION__UPDATE_SUBMODULE] +
+		data->counts[CHECKOUT_ACTION__UPDATE_CONFLICT];
 
-	return 0;
-
-fail:
-	*counts_ptr = NULL;
-	git__free(counts);
-	*actions_ptr = NULL;
-	git__free(actions);
-
+done:
 	git_pathspec__vfree(&pathspec);
 	git_pool_clear(&pathpool);
 
@@ -1745,7 +1734,6 @@ static int checkout_blob(
 }
 
 static int checkout_remove_the_old(
-	unsigned int *actions,
 	checkout_data *data)
 {
 	int error = 0;
@@ -1762,7 +1750,7 @@ static int checkout_remove_the_old(
 	git_buf_truncate(&data->path, data->workdir_len);
 
 	git_vector_foreach(&data->diff->deltas, i, delta) {
-		if (actions[i] & CHECKOUT_ACTION__REMOVE) {
+		if (data->actions[i] & CHECKOUT_ACTION__REMOVE) {
 			error = git_futils_rmdir_r(delta->old_file.path, workdir, flg);
 			if (error < 0)
 				return error;
@@ -1770,7 +1758,7 @@ static int checkout_remove_the_old(
 			data->completed_steps++;
 			report_progress(data, delta->old_file.path);
 
-			if ((actions[i] & CHECKOUT_ACTION__UPDATE_BLOB) == 0 &&
+			if ((data->actions[i] & CHECKOUT_ACTION__UPDATE_BLOB) == 0 &&
 				(data->strategy & GIT_CHECKOUT_DONT_UPDATE_INDEX) == 0 &&
 				data->index != NULL)
 			{
@@ -1821,7 +1809,6 @@ static int checkout_deferred_remove(git_repository *repo, const char *path)
 }
 
 static int checkout_create_the_new(
-	unsigned int *actions,
 	checkout_data *data)
 {
 	int error = 0;
@@ -1829,7 +1816,7 @@ static int checkout_create_the_new(
 	size_t i;
 
 	git_vector_foreach(&data->diff->deltas, i, delta) {
-		if (actions[i] & CHECKOUT_ACTION__DEFER_REMOVE) {
+		if (data->actions[i] & CHECKOUT_ACTION__DEFER_REMOVE) {
 			/* this had a blocker directory that should only be removed iff
 			 * all of the contents of the directory were safely removed
 			 */
@@ -1838,7 +1825,7 @@ static int checkout_create_the_new(
 				return error;
 		}
 
-		if (actions[i] & CHECKOUT_ACTION__UPDATE_BLOB) {
+		if (data->actions[i] & CHECKOUT_ACTION__UPDATE_BLOB) {
 			error = checkout_blob(data, &delta->new_file);
 			if (error < 0)
 				return error;
@@ -1851,16 +1838,14 @@ static int checkout_create_the_new(
 	return 0;
 }
 
-static int checkout_create_submodules(
-	unsigned int *actions,
-	checkout_data *data)
+static int checkout_create_submodules(checkout_data *data)
 {
 	int error = 0;
 	git_diff_delta *delta;
 	size_t i;
 
 	git_vector_foreach(&data->diff->deltas, i, delta) {
-		if (actions[i] & CHECKOUT_ACTION__DEFER_REMOVE) {
+		if (data->actions[i] & CHECKOUT_ACTION__DEFER_REMOVE) {
 			/* this has a blocker directory that should only be removed iff
 			 * all of the contents of the directory were safely removed
 			 */
@@ -1869,7 +1854,7 @@ static int checkout_create_submodules(
 				return error;
 		}
 
-		if (actions[i] & CHECKOUT_ACTION__UPDATE_SUBMODULE) {
+		if (data->actions[i] & CHECKOUT_ACTION__UPDATE_SUBMODULE) {
 			int error = checkout_submodule(data, &delta->new_file);
 			if (error < 0)
 				return error;
@@ -2289,6 +2274,8 @@ static void checkout_data_clear(checkout_data *data)
 	git__free(data->pfx);
 	data->pfx = NULL;
 
+	git__free(data->actions);
+
 	git_strmap_free(data->mkdir_map);
 
 	git_buf_free(&data->path);
@@ -2475,7 +2462,6 @@ int git_checkout_iterator(
 		workdir_opts = GIT_ITERATOR_OPTIONS_INIT;
 	checkout_data data = {0};
 	git_diff_options diff_opts = GIT_DIFF_OPTIONS_INIT;
-	uint32_t *actions = NULL;
 	size_t *counts = NULL;
 
 	/* initialize structures and options */
@@ -2541,37 +2527,31 @@ int git_checkout_iterator(
 	 * actions to be taken, plus look for conflicts and send notifications,
 	 * then loop through conflicts.
 	 */
-	if ((error = checkout_get_actions(&actions, &counts, &data, workdir)) != 0)
+	if ((error = checkout_get_actions(&data, workdir)) != 0)
 		goto cleanup;
-
-	data.total_steps = counts[CHECKOUT_ACTION__REMOVE] +
-		counts[CHECKOUT_ACTION__REMOVE_CONFLICT] +
-		counts[CHECKOUT_ACTION__UPDATE_BLOB] +
-		counts[CHECKOUT_ACTION__UPDATE_SUBMODULE] +
-		counts[CHECKOUT_ACTION__UPDATE_CONFLICT];
 
 	report_progress(&data, NULL); /* establish 0 baseline */
 
 	/* To deal with some order dependencies, perform remaining checkout
 	 * in three passes: removes, then update blobs, then update submodules.
 	 */
-	if (counts[CHECKOUT_ACTION__REMOVE] > 0 &&
-		(error = checkout_remove_the_old(actions, &data)) < 0)
+	if (data.counts[CHECKOUT_ACTION__REMOVE] > 0 &&
+		(error = checkout_remove_the_old(&data)) < 0)
 		goto cleanup;
 
-	if (counts[CHECKOUT_ACTION__REMOVE_CONFLICT] > 0 &&
+	if (data.counts[CHECKOUT_ACTION__REMOVE_CONFLICT] > 0 &&
 		(error = checkout_remove_conflicts(&data)) < 0)
 		goto cleanup;
 
-	if (counts[CHECKOUT_ACTION__UPDATE_BLOB] > 0 &&
-		(error = checkout_create_the_new(actions, &data)) < 0)
+	if (data.counts[CHECKOUT_ACTION__UPDATE_BLOB] > 0 &&
+		(error = checkout_create_the_new(&data)) < 0)
 		goto cleanup;
 
-	if (counts[CHECKOUT_ACTION__UPDATE_SUBMODULE] > 0 &&
-		(error = checkout_create_submodules(actions, &data)) < 0)
+	if (data.counts[CHECKOUT_ACTION__UPDATE_SUBMODULE] > 0 &&
+		(error = checkout_create_submodules(&data)) < 0)
 		goto cleanup;
 
-	if (counts[CHECKOUT_ACTION__UPDATE_CONFLICT] > 0 &&
+	if (data.counts[CHECKOUT_ACTION__UPDATE_CONFLICT] > 0 &&
 		(error = checkout_create_conflicts(&data)) < 0)
 		goto cleanup;
 
@@ -2592,8 +2572,6 @@ cleanup:
 	git_diff_free(data.diff);
 	git_iterator_free(workdir);
 	git_iterator_free(baseline);
-	git__free(actions);
-	git__free(counts);
 	checkout_data_clear(&data);
 
 	return error;
