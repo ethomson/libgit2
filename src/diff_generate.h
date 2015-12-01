@@ -75,8 +75,8 @@ extern int git_diff_delta__format_file_header(
 	int oid_strlen);
 
 extern int git_diff_generated__oid_for_file(
-	git_oid *out, git_diff_generated *, const char *, uint16_t, git_off_t);
-extern int git_diff__oid_for_entry(
+	git_oid *out, git_diff_generated *, const char *, uint16_t, size_t);
+extern int git_diff_generated__oid_for_entry(
 	git_oid *out, git_diff_generated *, const git_index_entry *, uint16_t, const git_oid *update);
 
 extern int git_diff__from_iterators(
@@ -154,4 +154,3 @@ GIT_INLINE(int) git_diff_file__resolve_zero_size(
 }
 
 #endif
-

@@ -346,8 +346,10 @@ static const char *diff_mnemonic_prefix(
 	return pfx;
 }
 
-static void diff_generated_free(git_diff_generated *diff)
+static void diff_generated_free(git_diff *d)
 {
+	git_diff_generated *diff = (git_diff_generated *)d;
+
 	git_vector_free_deep(&diff->base.deltas);
 
 	git_pathspec__vfree(&diff->pathspec);
@@ -386,8 +388,8 @@ static git_diff_generated *diff_list_alloc(
 
 	/* Use case-insensitive compare if either iterator has
 	 * the ignore_case bit set */
-	diff_set_ignore_case(
-		diff,
+	git_diff__set_ignore_case(
+		&diff->base,
 		git_iterator_ignore_case(old_iter) ||
 		git_iterator_ignore_case(new_iter));
 
@@ -514,7 +516,7 @@ int git_diff_generated__oid_for_file(
 	git_diff_generated *diff,
 	const char *path,
 	uint16_t mode,
-	git_off_t size)
+	size_t size)
 {
 	git_index_entry entry;
 
@@ -523,10 +525,10 @@ int git_diff_generated__oid_for_file(
 	entry.file_size = size;
 	entry.path = (char *)path;
 
-	return git_diff__oid_for_entry(out, diff, &entry, mode, NULL);
+	return git_diff_generated__oid_for_entry(out, diff, &entry, mode, NULL);
 }
 
-int git_diff__oid_for_entry(
+int git_diff_generated__oid_for_entry(
 	git_oid *out,
 	git_diff_generated *diff,
 	const git_index_entry *src,
@@ -792,7 +794,7 @@ static int maybe_modified(
 			DIFF_FLAG_IS_SET(diff, GIT_DIFF_UPDATE_INDEX) && omode == nmode ?
 			&oitem->id : NULL;
 
-		if ((error = git_diff__oid_for_entry(
+		if ((error = git_diff_generated__oid_for_entry(
 				&noid, diff, nitem, nmode, update_check)) < 0)
 			return error;
 
@@ -1206,7 +1208,7 @@ cleanup:
 	if (!error)
 		*diff_ptr = &diff->base;
 	else
-		diff_generated_free(diff);
+		diff_generated_free(&diff->base);
 
 	return error;
 }
@@ -1299,7 +1301,7 @@ int git_diff_tree_to_index(
 
 	/* if index is in case-insensitive order, re-sort deltas to match */
 	if (!error && index_ignore_case)
-		diff_set_ignore_case(*diff, true);
+		git_diff__set_ignore_case(*diff, true);
 
 	return error;
 }
