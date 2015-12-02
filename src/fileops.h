@@ -97,6 +97,7 @@ struct git_futils_mkdir_perfdata
 
 struct git_futils_mkdir_options
 {
+	git_mutex *dir_lock;
 	git_strmap *dir_map;
 	git_pool *pool;
 	struct git_futils_mkdir_perfdata perfdata;

@@ -558,8 +558,16 @@ int git_futils_mkdir_relative(
 		*tail = '\0';
 		st.st_mode = 0;
 
-		if (opts->dir_map && git_strmap_exists(opts->dir_map, make_path.ptr))
-			continue;
+		if (opts->dir_map) {
+			if (opts->dir_lock)
+				git_mutex_lock(opts->dir_lock);
+
+			if (git_strmap_exists(opts->dir_map, make_path.ptr))
+				continue;
+
+			if (opts->dir_lock)
+				git_mutex_unlock(opts->dir_lock);
+		}
 
 		/* See what's going on with this path component */
 		opts->perfdata.stat_calls++;
@@ -605,7 +613,14 @@ retry_lstat:
 
 			memcpy(cache_path, make_path.ptr, make_path.size + 1);
 
+			if (opts->dir_lock)
+				git_mutex_lock(opts->dir_lock);
+
 			git_strmap_insert(opts->dir_map, cache_path, cache_path, error);
+
+			if (opts->dir_lock)
+				git_mutex_unlock(opts->dir_lock);
+
 			if (error < 0)
 				goto done;
 		}

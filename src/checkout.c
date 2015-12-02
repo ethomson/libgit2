@@ -74,11 +74,15 @@ typedef struct {
 	unsigned int strategy;
 	int can_symlink;
 	bool reload_submodules;
+	git_atomic current_step;
 	size_t total_steps;
-	size_t completed_steps;
+	git_atomic completed_steps;
 	git_checkout_perfdata perfdata;
 	git_strmap *mkdir_map;
 	git_attr_session attr_session;
+
+	git_mutex mkdir_lock;
+	git_mutex index_lock;
 } checkout_data;
 
 typedef struct {
@@ -1354,6 +1358,7 @@ static int checkout_mkdir(
 	struct git_futils_mkdir_options mkdir_opts = {0};
 	int error;
 
+	mkdir_opts.dir_lock = &data->mkdir_lock;
 	mkdir_opts.dir_map = data->mkdir_map;
 	mkdir_opts.pool = &data->pool;
 
@@ -1470,10 +1475,12 @@ static int blob_content_to_file(
 		return fd;
 	}
 
+	/*
 	filter_opts.attr_session = &data->attr_session;
 	filter_opts.temp_buf = &data->tmp;
+	*/
 
-	if (!data->opts.disable_filters &&
+	if (0 && !data->opts.disable_filters &&
 		(error = git_filter_list__load_ext(
 			&fl, data->repo, blob, hint_path,
 			GIT_FILTER_TO_WORKTREE, &filter_opts)))
@@ -1553,6 +1560,7 @@ static int checkout_update_index(
 	struct stat *st)
 {
 	git_index_entry entry;
+	int error;
 
 	if (!data->index)
 		return 0;
@@ -1562,7 +1570,11 @@ static int checkout_update_index(
 	git_index_entry__init_from_stat(&entry, st, true);
 	git_oid_cpy(&entry.id, &file->id);
 
-	return git_index_add(data->index, &entry);
+	git_mutex_lock(&data->index_lock);
+	error = git_index_add(data->index, &entry);
+	git_mutex_unlock(&data->index_lock);
+
+	return error;
 }
 
 static int checkout_submodule_update_index(
@@ -1636,9 +1648,11 @@ static void report_progress(
 	checkout_data *data,
 	const char *path)
 {
+	int completed_steps = git_atomic_get(&data->completed_steps);
+
 	if (data->opts.progress_cb)
 		data->opts.progress_cb(
-			path, data->completed_steps, data->total_steps,
+			path, completed_steps, data->total_steps,
 			data->opts.progress_payload);
 }
 
@@ -1752,10 +1766,11 @@ static int checkout_remove_the_old(
 	git_vector_foreach(&data->diff->deltas, i, delta) {
 		if (data->actions[i] & CHECKOUT_ACTION__REMOVE) {
 			error = git_futils_rmdir_r(delta->old_file.path, workdir, flg);
+
 			if (error < 0)
 				return error;
 
-			data->completed_steps++;
+			git_atomic_inc(&data->completed_steps);
 			report_progress(data, delta->old_file.path);
 
 			if ((data->actions[i] & CHECKOUT_ACTION__UPDATE_BLOB) == 0 &&
@@ -1772,7 +1787,7 @@ static int checkout_remove_the_old(
 		if (error < 0)
 			return error;
 
-		data->completed_steps++;
+		git_atomic_inc(&data->completed_steps);
 		report_progress(data, str);
 
 		if ((data->strategy & GIT_CHECKOUT_DONT_UPDATE_INDEX) == 0 &&
@@ -1808,34 +1823,72 @@ static int checkout_deferred_remove(git_repository *repo, const char *path)
 #endif
 }
 
-static int checkout_create_the_new(
-	checkout_data *data)
+static void *checkout_create_the_new_parallel(void *arg)
 {
+	checkout_data *data = (checkout_data *)arg;
+	git_error_state *err_state;
 	int error = 0;
-	git_diff_delta *delta;
-	size_t i;
 
-	git_vector_foreach(&data->diff->deltas, i, delta) {
-		if (data->actions[i] & CHECKOUT_ACTION__DEFER_REMOVE) {
+	if ((err_state = git__calloc(1, sizeof(git_error_state))) == NULL)
+		return NULL;
+
+	while (true) {
+		int idx = git_atomic_inc(&data->current_step);
+		git_diff_delta *delta = data->diff->deltas.contents[idx];
+
+		if (idx >= data->diff->deltas.length)
+			break;
+
+		if (data->actions[idx] & CHECKOUT_ACTION__DEFER_REMOVE) {
 			/* this had a blocker directory that should only be removed iff
 			 * all of the contents of the directory were safely removed
 			 */
 			if ((error = checkout_deferred_remove(
 					data->repo, delta->old_file.path)) < 0)
-				return error;
+				break;
 		}
 
-		if (data->actions[i] & CHECKOUT_ACTION__UPDATE_BLOB) {
+		if (data->actions[idx] & CHECKOUT_ACTION__UPDATE_BLOB) {
 			error = checkout_blob(data, &delta->new_file);
 			if (error < 0)
-				return error;
+				break;
 
-			data->completed_steps++;
+			git_atomic_inc(&data->completed_steps);
 			report_progress(data, delta->new_file.path);
 		}
 	}
 
-	return 0;
+	giterr_state_capture(err_state, error);
+	return err_state;
+}
+
+static int checkout_create_the_new(checkout_data *data)
+{
+	git_diff_delta *delta;
+	git_thread thread[8];
+	git_error_state *err_state;
+	size_t i;
+	int error = 0;
+
+	git_atomic_set(&data->current_step, -1);
+
+	for (i = 0; i < 2; i++)
+		git_thread_create(&thread[i], NULL, checkout_create_the_new_parallel, data);
+
+	for (i = 0; i < 2; i++) {
+		git_thread_join(&thread[i], &err_state);
+
+		if (!err_state) {
+			giterr_set_oom();
+			error = -1;
+		} else if (err_state->error_code < 0 && !error) {
+			error = giterr_state_restore(err_state);
+		}
+
+		giterr_state_free(err_state);
+	}
+
+	return error;
 }
 
 static int checkout_create_submodules(checkout_data *data)
@@ -1859,7 +1912,7 @@ static int checkout_create_submodules(checkout_data *data)
 			if (error < 0)
 				return error;
 
-			data->completed_steps++;
+			git_atomic_inc(&data->completed_steps);
 			report_progress(data, delta->new_file.path);
 		}
 	}
@@ -2202,7 +2255,8 @@ static int checkout_create_conflicts(checkout_data *data)
 		if (error)
 			break;
 
-		data->completed_steps++;
+		git_atomic_inc(&data->completed_steps);
+
 		report_progress(data,
 			conflict->ours ? conflict->ours->path :
 			(conflict->theirs ? conflict->theirs->path : conflict->ancestor->path));
@@ -2220,7 +2274,7 @@ static int checkout_remove_conflicts(checkout_data *data)
 		if (git_index_conflict_remove(data->index, conflict) < 0)
 			return -1;
 
-		data->completed_steps++;
+		git_atomic_inc(&data->completed_steps);
 	}
 
 	return 0;
@@ -2513,6 +2567,9 @@ int git_checkout_iterator(
 			goto cleanup;
 	}
 
+	git_mutex_init(&data.index_lock);
+	git_mutex_init(&data.mkdir_lock);
+
 	/* Should not have case insensitivity mismatch */
 	assert(git_iterator_ignore_case(workdir) == git_iterator_ignore_case(baseline));
 
@@ -2559,7 +2616,7 @@ int git_checkout_iterator(
 		(error = checkout_extensions_update_index(&data)) < 0)
 		goto cleanup;
 
-	assert(data.completed_steps == data.total_steps);
+	assert(git_atomic_get(&data.completed_steps) == data.total_steps);
 
 	if (data.opts.perfdata_cb)
 		data.opts.perfdata_cb(&data.perfdata, data.opts.perfdata_payload);
