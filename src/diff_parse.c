@@ -1,18 +1,32 @@
+/*
+ * Copyright (C) the libgit2 contributors. All rights reserved.
+ *
+ * This file is part of libgit2, distributed under the GNU GPL v2 with
+ * a Linking Exception. For full terms see the included COPYING file.
+ */
+#include "git2/diff.h"
 #include "git2/patch.h"
+#include "diff.h"
 #include "patch.h"
 #include "path.h"
+#include "pool.h"
 
 #define parse_err(...) \
 	( giterr_set(GITERR_PATCH, __VA_ARGS__), -1 )
 
 typedef struct {
+	struct git_diff base;
+
+	git_diff_parse_options parse_opts;
+
+	const char *content;
+	size_t content_len;
+
+	git_vector patches;
+} git_diff_parsed;
+
+typedef struct {
 	git_patch base;
-
-	git_patch_options opts;
-
-	/* the patch contents, which lines will point into. */
-	/* TODO: allow us to point somewhere refcounted. */
-	char *content;
 
 	/* the paths from the `diff --git` header, these will be used if this is not
 	 * a rename (and rename paths are specified) or if no `+++`/`---` line specify
@@ -31,6 +45,8 @@ typedef struct {
 } git_patch_parsed;
 
 typedef struct {
+	git_diff_parse_options *opts;
+
 	const char *content;
 	size_t content_len;
 
@@ -39,10 +55,10 @@ typedef struct {
 	size_t line_num;
 
 	size_t remain;
-} patch_parse_ctx;
+} diff_parse_ctx;
 
 
-static void parse_advance_line(patch_parse_ctx *ctx)
+static void parse_advance_line(diff_parse_ctx *ctx)
 {
 	ctx->line += ctx->line_len;
 	ctx->remain -= ctx->line_len;
@@ -50,7 +66,7 @@ static void parse_advance_line(patch_parse_ctx *ctx)
 	ctx->line_num++;
 }
 
-static void parse_advance_chars(patch_parse_ctx *ctx, size_t char_cnt)
+static void parse_advance_chars(diff_parse_ctx *ctx, size_t char_cnt)
 {
 	ctx->line += char_cnt;
 	ctx->remain -= char_cnt;
@@ -58,7 +74,7 @@ static void parse_advance_chars(patch_parse_ctx *ctx, size_t char_cnt)
 }
 
 static int parse_advance_expected(
-	patch_parse_ctx *ctx,
+	diff_parse_ctx *ctx,
 	const char *expected,
 	size_t expected_len)
 {
@@ -75,7 +91,7 @@ static int parse_advance_expected(
 #define parse_advance_expected_s(ctx, str) \
 	parse_advance_expected(ctx, str, sizeof(str) - 1)
 
-static int parse_advance_ws(patch_parse_ctx *ctx)
+static int parse_advance_ws(diff_parse_ctx *ctx)
 {
 	int ret = -1;
 
@@ -91,7 +107,7 @@ static int parse_advance_ws(patch_parse_ctx *ctx)
 	return ret;
 }
 
-static int parse_advance_nl(patch_parse_ctx *ctx)
+static int parse_advance_nl(diff_parse_ctx *ctx)
 {
 	if (ctx->line_len != 1 || ctx->line[0] != '\n')
 		return -1;
@@ -100,7 +116,7 @@ static int parse_advance_nl(patch_parse_ctx *ctx)
 	return 0;
 }
 
-static int header_path_len(patch_parse_ctx *ctx)
+static int header_path_len(diff_parse_ctx *ctx)
 {
 	bool inquote = 0;
 	bool quoted = (ctx->line_len > 0 && ctx->line[0] == '"');
@@ -120,7 +136,7 @@ static int header_path_len(patch_parse_ctx *ctx)
 	return len;
 }
 
-static int parse_header_path_buf(git_buf *path, patch_parse_ctx *ctx)
+static int parse_header_path_buf(git_buf *path, diff_parse_ctx *ctx)
 {
 	int path_len, error = 0;
 
@@ -145,7 +161,7 @@ done:
 	return error;
 }
 
-static int parse_header_path(char **out, patch_parse_ctx *ctx)
+static int parse_header_path(char **out, diff_parse_ctx *ctx)
 {
 	git_buf path = GIT_BUF_INIT;
 	int error = parse_header_path_buf(&path, ctx);
@@ -156,18 +172,18 @@ static int parse_header_path(char **out, patch_parse_ctx *ctx)
 }
 
 static int parse_header_git_oldpath(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	return parse_header_path(&patch->old_path, ctx);
 }
 
 static int parse_header_git_newpath(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	return parse_header_path(&patch->new_path, ctx);
 }
 
-static int parse_header_mode(uint16_t *mode, patch_parse_ctx *ctx)
+static int parse_header_mode(uint16_t *mode, diff_parse_ctx *ctx)
 {
 	const char *end;
 	int32_t m;
@@ -192,7 +208,7 @@ static int parse_header_mode(uint16_t *mode, patch_parse_ctx *ctx)
 static int parse_header_oid(
 	git_oid *oid,
 	int *oid_len,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	size_t len;
 
@@ -214,7 +230,7 @@ static int parse_header_oid(
 }
 
 static int parse_header_git_index(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	if (parse_header_oid(&patch->base.delta->old_file.id,
 			&patch->base.delta->old_file.id_abbrev, ctx) < 0 ||
@@ -242,20 +258,20 @@ static int parse_header_git_index(
 }
 
 static int parse_header_git_oldmode(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	return parse_header_mode(&patch->base.delta->old_file.mode, ctx);
 }
 
 static int parse_header_git_newmode(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	return parse_header_mode(&patch->base.delta->new_file.mode, ctx);
 }
 
 static int parse_header_git_deletedfilemode(
 	git_patch_parsed *patch,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	git__free((char *)patch->base.delta->old_file.path);
 
@@ -268,7 +284,7 @@ static int parse_header_git_deletedfilemode(
 
 static int parse_header_git_newfilemode(
 	git_patch_parsed *patch,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	git__free((char *)patch->base.delta->new_file.path);
 
@@ -281,7 +297,7 @@ static int parse_header_git_newfilemode(
 
 static int parse_header_rename(
 	char **out,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	git_buf path = GIT_BUF_INIT;
 
@@ -296,20 +312,20 @@ static int parse_header_rename(
 }
 
 static int parse_header_renamefrom(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	patch->base.delta->status = GIT_DELTA_RENAMED;
 	return parse_header_rename(&patch->rename_old_path, ctx);
 }
 
 static int parse_header_renameto(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	patch->base.delta->status = GIT_DELTA_RENAMED;
 	return parse_header_rename(&patch->rename_new_path, ctx);
 }
 
-static int parse_header_percent(uint16_t *out, patch_parse_ctx *ctx)
+static int parse_header_percent(uint16_t *out, diff_parse_ctx *ctx)
 {
 	int32_t val;
 	const char *end;
@@ -331,7 +347,7 @@ static int parse_header_percent(uint16_t *out, patch_parse_ctx *ctx)
 }
 
 static int parse_header_similarity(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	if (parse_header_percent(&patch->base.delta->similarity, ctx) < 0)
 		return parse_err("invalid similarity percentage at line %d",
@@ -341,7 +357,7 @@ static int parse_header_similarity(
 }
 
 static int parse_header_dissimilarity(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	uint16_t dissimilarity;
 
@@ -356,7 +372,7 @@ static int parse_header_dissimilarity(
 
 typedef struct {
 	const char *str;
-	int(*fn)(git_patch_parsed *, patch_parse_ctx *);
+	int(*fn)(git_patch_parsed *, diff_parse_ctx *);
 } header_git_op;
 
 static const header_git_op header_git_ops[] = {
@@ -379,7 +395,7 @@ static const header_git_op header_git_ops[] = {
 
 static int parse_header_git(
 	git_patch_parsed *patch,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	size_t i;
 	int error = 0;
@@ -434,7 +450,7 @@ done:
 	return error;
 }
 
-static int parse_number(git_off_t *out, patch_parse_ctx *ctx)
+static int parse_number(git_off_t *out, diff_parse_ctx *ctx)
 {
 	const char *end;
 	int64_t num;
@@ -454,7 +470,7 @@ static int parse_number(git_off_t *out, patch_parse_ctx *ctx)
 	return 0;
 }
 
-static int parse_int(int *out, patch_parse_ctx *ctx)
+static int parse_int(int *out, diff_parse_ctx *ctx)
 {
 	git_off_t num;
 
@@ -467,7 +483,7 @@ static int parse_int(int *out, patch_parse_ctx *ctx)
 
 static int parse_hunk_header(
 	git_patch_hunk *hunk,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	const char *header_start = ctx->line;
 
@@ -521,7 +537,7 @@ fail:
 static int parse_hunk_body(
 	git_patch_parsed *patch,
 	git_patch_hunk *hunk,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	git_diff_line *line;
 	int error = 0;
@@ -589,10 +605,10 @@ static int parse_hunk_body(
 	}
 
 	/* Handle "\ No newline at end of file".  Only expect the leading
-	* backslash, though, because the rest of the string could be
-	* localized.  Because `diff` optimizes for the case where you
-	* want to apply the patch by hand.
-	*/
+	 * backslash, though, because the rest of the string could be
+	 * localized.  Because `diff` optimizes for the case where you
+	 * want to apply the patch by hand.
+	 */
 	if (ctx->line_len >= 2 && memcmp(ctx->line, "\\ ", 2) == 0 &&
 		git_array_size(patch->base.lines) > 0) {
 
@@ -614,7 +630,7 @@ done:
 
 static int parsed_patch_header(
 	git_patch_parsed *patch,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	int error = 0;
 
@@ -664,7 +680,7 @@ done:
 
 static int parsed_patch_binary_side(
 	git_diff_binary_file *binary,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	git_diff_binary_t type = GIT_DIFF_BINARY_NONE;
 	git_buf base85 = GIT_BUF_INIT, decoded = GIT_BUF_INIT;
@@ -744,7 +760,7 @@ done:
 
 static int parsed_patch_binary(
 	git_patch_parsed *patch,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	int error;
 
@@ -772,7 +788,7 @@ static int parsed_patch_binary(
 
 static int parsed_patch_hunks(
 	git_patch_parsed *patch,
-	patch_parse_ctx *ctx)
+	diff_parse_ctx *ctx)
 {
 	git_patch_hunk *hunk;
 	int error = 0;
@@ -797,7 +813,7 @@ done:
 }
 
 static int parsed_patch_body(
-	git_patch_parsed *patch, patch_parse_ctx *ctx)
+	git_patch_parsed *patch, diff_parse_ctx *ctx)
 {
 	if (ctx->line_len >= 16 && memcmp(ctx->line, "GIT binary patch", 16) == 0)
 		return parsed_patch_binary(patch, ctx);
@@ -829,16 +845,16 @@ int check_header_names(
 static int check_prefix(
 	char **out,
 	size_t *out_len,
-	git_patch_parsed *patch,
-	const char *path_start)
+	const char *path_start,
+	diff_parse_ctx *ctx)
 {
 	const char *path = path_start;
-	uint32_t remain = patch->opts.prefix_len;
+	uint32_t remain = ctx->opts->prefix_len;
 
 	*out = NULL;
 	*out_len = 0;
 
-	if (patch->opts.prefix_len == 0)
+	if (ctx->opts->prefix_len == 0)
 		goto done;
 
 	/* leading slashes do not count as part of the prefix in git apply */
@@ -854,7 +870,7 @@ static int check_prefix(
 
 	if (remain || !*path)
 		return parse_err("header filename does not contain %d path components",
-			patch->opts.prefix_len);
+			ctx->opts->prefix_len);
 
 done:
 	*out_len = (path - path_start);
@@ -863,7 +879,9 @@ done:
 	return (out == NULL) ? -1 : 0;
 }
 
-static int check_filenames(git_patch_parsed *patch)
+static int check_filenames(
+	git_patch_parsed *patch,
+	diff_parse_ctx *ctx)
 {
 	const char *prefixed_new, *prefixed_old;
 	size_t old_prefixlen = 0, new_prefixlen = 0;
@@ -889,9 +907,9 @@ static int check_filenames(git_patch_parsed *patch)
 		patch->header_new_path;
 
 	if (check_prefix(
-			&patch->old_prefix, &old_prefixlen, patch, prefixed_old) < 0 ||
+			&patch->old_prefix, &old_prefixlen, prefixed_old, ctx) < 0 ||
 		check_prefix(
-			&patch->new_prefix, &new_prefixlen, patch, prefixed_new) < 0)
+			&patch->new_prefix, &new_prefixlen, prefixed_new, ctx) < 0)
 		return -1;
 
 	/* Prefer the rename filenames as they are unambiguous and unprefixed */
@@ -912,9 +930,11 @@ static int check_filenames(git_patch_parsed *patch)
 	return 0;
 }
 
-static int check_patch(git_patch_parsed *patch)
+static int check_patch(
+	git_patch_parsed *patch,
+	diff_parse_ctx *ctx)
 {
-	if (check_filenames(patch) < 0)
+	if (check_filenames(patch, ctx) < 0)
 		return -1;
 
 	if (patch->base.delta->old_file.path &&
@@ -952,30 +972,20 @@ static void patch_parsed__free(git_patch *p)
 	git__free(patch->rename_new_path);
 	git__free(patch->old_path);
 	git__free(patch->new_path);
-	git__free(patch->content);
 	git__free(patch);
 }
 
-int git_patch_from_buffer(
+static int parse_next_patch(
 	git_patch **out,
-	const char *content,
-	size_t content_len,
-	git_patch_options *opts)
+	diff_parse_ctx *ctx)
 {
-	patch_parse_ctx ctx = { 0 };
 	git_patch_parsed *patch;
-	git_patch_options default_opts = GIT_PATCH_OPTIONS_INIT;
 	int error = 0;
 
 	*out = NULL;
 
 	patch = git__calloc(1, sizeof(git_patch_parsed));
 	GITERR_CHECK_ALLOC(patch);
-
-	if (opts)
-		memcpy(&patch->opts, opts, sizeof(git_patch_options));
-	else
-		memcpy(&patch->opts, &default_opts, sizeof(git_patch_options));
 
 	patch->base.free_fn = patch_parsed__free;
 
@@ -985,20 +995,9 @@ int git_patch_from_buffer(
 	patch->base.delta->status = GIT_DELTA_MODIFIED;
 	patch->base.delta->nfiles = 2;
 
-	if (content_len) {
-		patch->content = git__malloc(content_len);
-		GITERR_CHECK_ALLOC(patch->content);
-
-		memcpy(patch->content, content, content_len);
-	}
-
-	ctx.content = patch->content;
-	ctx.content_len = content_len;
-	ctx.remain = content_len;
-
-	if ((error = parsed_patch_header(patch, &ctx)) < 0 ||
-		(error = parsed_patch_body(patch, &ctx)) < 0 ||
-		(error = check_patch(patch)) < 0)
+	if ((error = parsed_patch_header(patch, ctx)) < 0 ||
+		(error = parsed_patch_body(patch, ctx)) < 0 ||
+		(error = check_patch(patch, ctx)) < 0)
 		goto done;
 
 	patch->base.diff_opts.old_prefix = patch->old_prefix;
@@ -1011,6 +1010,93 @@ int git_patch_from_buffer(
 done:
 	if (error < 0)
 		patch_parsed__free(&patch->base);
+
+	return error;
+}
+
+static void diff_parsed_free(git_diff *d)
+{
+	git_diff_parsed *diff = (git_diff_parsed *)d;
+	git_patch *patch;
+	size_t i;
+
+	if (!diff)
+		return;
+
+	git_vector_foreach(&diff->patches, i, patch)
+		git_patch_free(patch);
+
+	git_vector_free(&diff->patches);
+	git__free(diff);
+}
+
+int git_patch_from_buffer(
+	git_patch **out,
+	const char *content,
+	size_t content_len,
+	const git_diff_parse_options *given_opts)
+{
+	git_diff_parse_options default_opts = GIT_DIFF_PARSE_OPTIONS_INIT;
+	diff_parse_ctx ctx = { 0 };
+
+	ctx.opts = given_opts ? given_opts : &default_opts;
+	ctx.content = content;
+	ctx.content_len = content_len;
+	ctx.remain = content_len;
+
+	return parse_next_patch(out, &ctx);
+}
+
+int git_diff_from_buffer(
+	git_diff **out,
+	const char *content,
+	size_t content_len,
+	const git_diff_parse_options *opts)
+{
+	git_diff_parsed *diff = NULL;
+	diff_parse_ctx ctx = { 0 };
+	git_diff_parse_options default_opts = GIT_DIFF_PARSE_OPTIONS_INIT;
+	int error = 0;
+
+	*out = NULL;
+
+	if (opts)
+		memcpy(&diff->parse_opts, opts, sizeof(git_diff_parse_options));
+	else
+		memcpy(&diff->parse_opts, &default_opts, sizeof(git_diff_parse_options));
+
+	diff = git__calloc(1, sizeof(git_diff_parsed));
+	GITERR_CHECK_ALLOC(diff);
+
+	diff->base.free_fn = diff_parsed_free; 
+
+	if (content_len) {
+		diff->content_len = content_len;
+		diff->content = git__malloc(content_len);
+		GITERR_CHECK_ALLOC(diff->content);
+
+		memcpy(diff->content, content, content_len);
+	}
+
+	ctx.opts = &diff->parse_opts;
+	ctx.content = diff->content;
+	ctx.content_len = content_len;
+	ctx.remain = content_len;
+
+	while (ctx.remain) {
+		git_patch *patch;
+
+		if ((error = parse_next_patch(&patch, &ctx)) < 0 ||
+			(error = git_vector_insert(&diff->patches, patch)) < 0 ||
+			(error = git_vector_insert(&diff->base.deltas, patch->delta)) < 0)
+			goto done;
+	}
+
+	*out = &diff->base;
+
+done:
+	if (error < 0)
+		diff_parsed_free(diff);
 
 	return error;
 }

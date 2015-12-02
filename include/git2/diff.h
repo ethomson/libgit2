@@ -430,6 +430,22 @@ typedef struct {
 #define GIT_DIFF_OPTIONS_INIT \
 	{GIT_DIFF_OPTIONS_VERSION, 0, GIT_SUBMODULE_IGNORE_UNSPECIFIED, {NULL,0}, NULL, NULL, NULL, 3}
 
+/** Options for parsing patch files. */
+typedef struct {
+	unsigned int version;	/**< version for the struct */
+
+	/**
+	 * The length of the prefix (in path segments) for the filenames.
+	 * This prefix will be removed when looking for files.  The default is 1.
+	 */
+	uint32_t prefix_len;
+} git_diff_parse_options;
+
+/* The current version of the diff_parse options structure */
+#define GIT_DIFF_PARSE_OPTIONS_VERSION 1
+
+#define GIT_DIFF_PARSE_OPTIONS_INIT { GIT_DIFF_PARSE_OPTIONS_VERSION, 1 }
+
 /**
  * Initializes a `git_diff_options` with default values. Equivalent to
  * creating an instance with GIT_DIFF_OPTIONS_INIT.
