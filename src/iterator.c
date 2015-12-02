@@ -11,6 +11,7 @@
 #include "ignore.h"
 #include "buffer.h"
 #include "submodule.h"
+#include "strnmap.h"
 #include <ctype.h>
 
 #define ITERATOR_SET_CB(P,NAME_LC) do { \
@@ -971,10 +972,8 @@ struct fs_iterator {
 	/* callbacks that can override the normal file / directory
 	 * handling and insert thier own data instead.
 	 */
-	int (*readdir_cb)(git_vector *, const char *, size_t, void *);
-	void *readdir_cb_data;
-	int (*statfile_cb)(fs_iterator_path_with_stat **, const char *, size_t, void *);
-	void *statfile_cb_data;
+	int (*readdir_cb)(git_vector *, fs_iterator *, const char *, size_t);
+	int (*statfile_cb)(fs_iterator_path_with_stat **, fs_iterator *, const char *, size_t);
 
 	int (*enter_dir_cb)(fs_iterator *self);
 	int (*leave_dir_cb)(fs_iterator *self);
@@ -1116,87 +1115,79 @@ static int fs_iterator__dirload_stat(
 
 static int fs_iterator__dirload(
 	git_vector *contents,
-	const char *dirpath,
-	size_t prefix_len,
-	unsigned int flags,
-	const char *start_stat,
-	const char *end_stat,
-	git_vector *pathlist,
-	int (*readdir_cb)(git_vector *, const char *, size_t, void *),
-	void *readdir_cb_data,
-	int (*statfile_cb)(fs_iterator_path_with_stat **, const char *, size_t, void *),
-	void *statfile_cb_data)
+	fs_iterator *fi)
 {
 	git_path_diriter diriter = GIT_PATH_DIRITER_INIT;
 	const char *path;
 	int (*strncomp)(const char *a, const char *b, size_t sz);
 	int (*prefixcomp)(const char *a, const char *b);
-	size_t start_len = start_stat ? strlen(start_stat) : 0;
-	size_t end_len = end_stat ? strlen(end_stat) : 0;
+	size_t start_len = fi->base.start ? strlen(fi->base.start) : 0;
+	size_t end_len = fi->base.end ? strlen(fi->base.end) : 0;
 	fs_iterator_path_with_stat *ps;
 	size_t path_len, cmp_len, ps_size;
 	git_iterator_match_t pathlist_match = ITERATOR_MATCH_INCLUDE;
 	int error;
 
-	strncomp = (flags & GIT_PATH_DIR_IGNORE_CASE) != 0 ?
+	strncomp = (fi->dirload_flags & GIT_PATH_DIR_IGNORE_CASE) != 0 ?
 		git__strncasecmp : git__strncmp;
-	prefixcomp = (flags & GIT_PATH_DIR_IGNORE_CASE) != 0 ?
+	prefixcomp = (fi->dirload_flags & GIT_PATH_DIR_IGNORE_CASE) != 0 ?
 		git__prefixcmp_icase : git__prefixcmp;
 
 	/* if we have a dir callback, invoke it */
-	if (readdir_cb) {
+	if (fi->readdir_cb) {
 		int applied;
 
-		path = dirpath + prefix_len;
-		path_len = strlen(dirpath) - prefix_len;
+		path = fi->path.ptr + fi->root_len;
+		path_len = strlen(fi->path.ptr) - fi->root_len;
 
-		applied = readdir_cb(contents, path, path_len, readdir_cb_data);
+		applied = fi->readdir_cb(contents, fi, path, path_len);
 
 		if (applied < 0)
 			return -1;
 
 		if (applied) {
-			/* TODO: is this necessary? */
 			git_vector_sort(contents);
 			return 0;
 		}
 	}
 
-	if ((error = git_path_diriter_init(&diriter, dirpath, flags)) < 0)
+	if ((error = git_path_diriter_init(
+			&diriter, fi->path.ptr, fi->dirload_flags)) < 0)
 		goto done;
 
 	while ((error = git_path_diriter_next(&diriter)) == 0) {
 		if ((error = git_path_diriter_fullpath(&path, &path_len, &diriter)) < 0)
 			goto done;
 
-		assert(path_len > prefix_len);
+		assert(path_len > fi->root_len);
 
 		/* remove the prefix if requested */
-		path += prefix_len;
-		path_len -= prefix_len;
+		path += fi->root_len;
+		path_len -= fi->root_len;
 
 		/* skip if before start_stat or after end_stat */
 		cmp_len = min(start_len, path_len);
-		if (cmp_len && strncomp(path, start_stat, cmp_len) < 0)
+		if (cmp_len && strncomp(path, fi->base.start, cmp_len) < 0)
 			continue;
 		/* skip if after end_stat */
 		cmp_len = min(end_len, path_len);
-		if (cmp_len && strncomp(path, end_stat, cmp_len) > 0)
+		if (cmp_len && strncomp(path, fi->base.end, cmp_len) > 0)
 			continue;
 
 		/* skip if we have a pathlist and this isn't in it.  note that we
 		 * haven't stat'd yet to know if it's a file or a directory, so this
 		 * match for files like `foo` when we're looking for `foo/bar`
 		 */
-		if (pathlist && !(pathlist_match = dirload_pathlist_match(
-				pathlist, path, path_len, prefixcomp)))
+		if (fi->base.pathlist &&
+				!(pathlist_match = dirload_pathlist_match(
+				fi->base.pathlist, path, path_len, prefixcomp)))
 			continue;
 
 		/* if we have a file callback, invoke it.  the callback may fill the
 		 * data for this path for us.
 		 */
-		if (statfile_cb) {
-			int applied = statfile_cb(&ps, path, path_len, statfile_cb_data);
+		if (fi->statfile_cb) {
+			int applied = fi->statfile_cb(&ps, fi, path, path_len);
 
 			if (applied < 0) {
 				error = -1;
@@ -1269,12 +1260,7 @@ static int fs_iterator__expand_dir(fs_iterator *fi)
 	ff = fs_iterator__alloc_frame(fi);
 	GITERR_CHECK_ALLOC(ff);
 
-	/* TODO: holy shit just pass `fi` ffs */
-	error = fs_iterator__dirload(&ff->entries,
-		fi->path.ptr, fi->root_len, fi->dirload_flags,
-		fi->base.start, fi->base.end, fi->base.pathlist,
-		fi->readdir_cb, fi->readdir_cb_data,
-		fi->statfile_cb, fi->statfile_cb_data);
+	error = fs_iterator__dirload(&ff->entries, fi);
 
 	if (error < 0) {
 		git_error_state last_error = { 0 };
@@ -1741,11 +1727,88 @@ static fs_iterator_path_with_stat *workdir_iterator__ps_from_index(
 	return ps;
 }
 
+struct index_dir {
+	const char *path;
+	size_t path_len;
+	unsigned int
+		seen : 1,
+		unchanged : 1;
+};
+
+static int workdir_iterator__find_unchanged_dirs(
+	workdir_iterator *wi, const char *path, size_t path_len)
+{
+	git_array_t(struct index_dir) dirstack = GIT_ARRAY_INIT;
+	git_index_entry *entry;
+	size_t idx, start_idx = 0;
+	int error;
+
+
+	printf("------\n");
+
+
+	/* step one: find the first file beneath the given directory path */
+	if (path_len == 0) {
+		entry = git_vector_get(&wi->index_snapshot, start_idx);
+	}
+	else {
+		assert(path[path_len - 1] == '/');
+
+		error = git_index_snapshot_find(
+			&start_idx, &wi->index_snapshot, wi->entry_srch, path, path_len, 0);
+
+		/* if this *was* found in the index, then this cannot be a directory and
+		 * we cannot proceed.
+		 */
+		if (error != GIT_ENOTFOUND)
+			return error;
+
+		entry = git_vector_get(&wi->index_snapshot, start_idx);
+
+		if (entry == NULL)
+			return 0;
+	}
+
+	/* step two: walk the index, collecting all the folders and whether all
+	 * the files have the assume-unchanged bit set.
+	 */
+	for (idx = start_idx;
+		entry != NULL;
+		idx++, entry = git_vector_get(&wi->index_snapshot, idx)) {
+
+		const char *relative_path, *sep;
+		size_t relative_len, map_pos;
+
+		if (path_len && wi->fi.base.prefixcomp(entry->path, path) != 0)
+			break;
+
+		relative_path = entry->path + path_len;
+		relative_len = strlen(entry->path) - path_len;
+
+		/* walk down to each directory component */
+		while (relative_len && (sep = git__memrchr(relative_path, '/', relative_len))) {
+			relative_len = sep - relative_path;
+
+
+
+			printf("  %.*s\n", relative_len, relative_path);
+
+			map_pos = git_strnmap_lookup_index(files, filename);
+			if (!git_strmap_valid_index(files, pos))
+				return false;
+		}
+
+		printf("%s   -    ", entry->path);
+		printf("%s\n", relative_path);
+
+	}
+}
+
 static int workdir_iterator__readdir_cb(
-	git_vector *contents, const char *path, size_t path_len, void *data)
+	git_vector *contents, fs_iterator *fi, const char *path, size_t path_len)
 {
 	git_index_entry *entry;
-	workdir_iterator *wi = data;
+	workdir_iterator *wi = (workdir_iterator *)fi;
 	size_t start_idx = 0, idx, end_idx;
 	bool is_dir = false, all_unchanged = true;
 	const char *last_subdir = NULL;
@@ -1754,6 +1817,12 @@ static int workdir_iterator__readdir_cb(
 	int (*strncomp)(const char *, const char *, size_t) = iterator__ignore_case(wi) ?
 		git__strncasecmp : git__strncmp;
 	int error = 0;
+
+
+	if ((error = workdir_iterator__find_unchanged_dirs(wi, path, path_len)) < 0)
+		return error;
+
+
 
 	dummy_subdir_entry.mode = GIT_FILEMODE_TREE;
 
@@ -1842,11 +1911,11 @@ static int workdir_iterator__readdir_cb(
 
 static int workdir_iterator__statfile_cb(
 	fs_iterator_path_with_stat **out,
+	fs_iterator *fi,
 	const char *path,
-	size_t path_len,
-	void *data)
+	size_t path_len)
 {
-	workdir_iterator *wi = data;
+	workdir_iterator *wi = (workdir_iterator *)fi;
 	git_index_entry *entry;
 	fs_iterator_path_with_stat *ps;
 	size_t idx;
@@ -1902,11 +1971,9 @@ int git_iterator_for_workdir_ext(
 	if ((wi->fi.base.flags & GIT_ITERATOR_DONT_ASSUME_UNCHANGED) == 0) {
 		if (wi->fi.base.flags & GIT_ITERATOR_DONT_RECURSE_ASSUME_UNCHANGED) {
 			wi->fi.readdir_cb = workdir_iterator__readdir_cb;
-			wi->fi.readdir_cb_data = wi;
 		}
 
 		wi->fi.statfile_cb = workdir_iterator__statfile_cb;
-		wi->fi.statfile_cb_data = wi;
 	}
 
 	if ((error = iterator__update_ignore_case((git_iterator *)wi, options ? options->flags : 0)) < 0 ||

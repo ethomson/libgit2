@@ -180,7 +180,7 @@ void test_diff_workdir__dont_recurse_with_assume_unchanged(void)
 	g_repo = cl_git_sandbox_init("status");
 
 	/* do initial diff */
-
+/*
 	cl_git_pass(git_diff_index_to_workdir(&diff, g_repo, NULL, &opts));
 	memset(&exp, 0, sizeof(exp));
 	cl_git_pass(git_diff_foreach(
@@ -190,10 +190,32 @@ void test_diff_workdir__dont_recurse_with_assume_unchanged(void)
 	cl_assert_equal_i(4, exp.file_status[GIT_DELTA_DELETED]);
 	cl_assert_equal_i(4, exp.file_status[GIT_DELTA_MODIFIED]);
 	git_diff_free(diff);
-
-	/* mark everything with ASSUME_UNCHANGED */
+*/
 	cl_git_pass(git_repository_index(&idx, g_repo));
 
+	/* create some more depth */
+	cl_must_pass(p_mkdir("status/subdir/another", 0777));
+	cl_must_pass(p_mkdir("status/subdir/foo", 0777));
+	cl_must_pass(p_mkdir("status/other", 0777));
+	cl_must_pass(p_mkdir("status/other/dir", 0777));
+	cl_must_pass(p_mkdir("status/other/dir2", 0777));
+
+	cl_git_mkfile("status/subdir/another/file.txt", "hi!\n");
+	cl_git_pass(git_index_add_bypath(idx, "subdir/another/file.txt"));
+
+	cl_git_mkfile("status/subdir/another/file2.txt", "hi again!\n");
+	cl_git_pass(git_index_add_bypath(idx, "subdir/another/file2.txt"));
+
+	cl_git_mkfile("status/subdir/foo/bar.txt", "bar\n");
+	cl_git_pass(git_index_add_bypath(idx, "subdir/foo/bar.txt"));
+
+	cl_git_mkfile("status/other/dir/file.txt", "hello!\n");
+	cl_git_pass(git_index_add_bypath(idx, "other/dir/file.txt"));
+
+	cl_git_mkfile("status/other/dir2/file.txt", "hello!\n");
+	cl_git_pass(git_index_add_bypath(idx, "other/dir2/file.txt"));
+
+	/* mark everything with ASSUME_UNCHANGED */
 	for (i = 0; i < git_index_entrycount(idx); i++) {
 		iep = (git_index_entry *)git_index_get_byindex(idx, i);
 		iep->flags |= GIT_IDXENTRY_ASSUME_UNCHANGED;
