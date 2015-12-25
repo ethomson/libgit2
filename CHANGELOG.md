@@ -3,6 +3,10 @@ v0.23 + 1
 
 ### Changes or improvements
 
+* Custom merge drivers can now be registered, which allows callers to
+  configure callbacks to honor `merge=driver` configuration in
+  `.gitattributes`.
+
 * Custom filters can now be registered with wildcard attributes, for
   example `filter=*`.  Consumers should examine the attributes parameter
   of the `check` function for details.
@@ -35,7 +39,6 @@ v0.23 + 1
 * `git_fetch_options` and `git_push_options` have gained a `custom_headers`
   field to set the extra HTTP header fields to send.
 
-
 * `git_stream_register_tls()` lets you register a callback to be used
   as the constructor for a TLS stream instead of the libgit2 built-in
   one.
@@ -43,6 +46,10 @@ v0.23 + 1
 ### API removals
 
 ### Breaking API changes
+
+* `git_merge_options` now provides a `default_driver` that can be used
+  to provide the name of a merge driver to be used to handle files changed
+  during a merge.
 
 * The `git_merge_tree_flag_t` is now `git_merge_flag_t`.  Subsequently,
   its members are no longer prefixed with `GIT_MERGE_TREE_FLAG` but are
