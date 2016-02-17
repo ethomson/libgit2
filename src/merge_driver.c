@@ -379,6 +379,12 @@ int git_merge_driver_for_source(
 
 	driver = merge_driver_lookup_with_wildcard(driver_name);
 
+        if (driver == NULL)
+        {
+            giterr_set(GITERR_MERGE, "The driver '%s' doesn't exist", driver_name);
+            return(GIT_ERROR);
+        }
+
 	if (driver && driver->check) {
 		error = driver->check(driver, &data, driver_name, src);
 
