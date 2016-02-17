@@ -17,6 +17,7 @@
 #include "signature.h"
 #include "message.h"
 #include "refs.h"
+#include "object_api.h"
 
 void git_commit__free(void *_commit)
 {
@@ -539,7 +540,7 @@ int git_commit_nth_gen_ancestor(
 
 	assert(ancestor && commit);
 
-	if (git_object_dup((git_object **) &current, (git_object *) commit) < 0)
+	if (git_commit_dup(&current, (git_commit *)commit) < 0)
 		return -1;
 
 	if (n == 0) {
