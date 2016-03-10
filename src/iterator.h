@@ -67,8 +67,13 @@ struct git_iterator {
 	git_iterator_type_t type;
 	git_iterator_callbacks *cb;
 	git_repository *repo;
+
 	char *start;
+	size_t start_len;
+
 	char *end;
+	size_t end_len;
+
 	bool started;
 	bool ended;
 	git_vector pathlist;
