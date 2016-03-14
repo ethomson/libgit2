@@ -34,9 +34,18 @@ typedef enum {
 	GIT_ITERATOR_DONT_AUTOEXPAND  = (1u << 3),
 	/** convert precomposed unicode to decomposed unicode */
 	GIT_ITERATOR_PRECOMPOSE_UNICODE = (1u << 4),
+	/** never convert precomposed unicode to decomposed unicode */
+	GIT_ITERATOR_DONT_PRECOMPOSE_UNICODE = (1u << 5),
 	/** include conflicts */
-	GIT_ITERATOR_INCLUDE_CONFLICTS = (1u << 5),
+	GIT_ITERATOR_INCLUDE_CONFLICTS = (1u << 6),
 } git_iterator_flag_t;
+
+typedef enum {
+	GIT_ITERATOR_STATUS_NORMAL = 0,
+	GIT_ITERATOR_STATUS_IGNORED = 1,
+	GIT_ITERATOR_STATUS_EMPTY = 2,
+	GIT_ITERATOR_STATUS_FILTERED = 3
+} git_iterator_status_t;
 
 typedef struct {
 	const char *start;
@@ -57,6 +66,8 @@ typedef struct {
 	int (*current)(const git_index_entry **, git_iterator *);
 	int (*advance)(const git_index_entry **, git_iterator *);
 	int (*advance_into)(const git_index_entry **, git_iterator *);
+	int (*advance_over_with_status)(
+		const git_index_entry **, git_iterator_status_t *, git_iterator *);
 	int (*reset)(git_iterator *);
 	int (*reset_range)(git_iterator *, const char *start, const char *end);
 	int (*at_end)(git_iterator *);
@@ -81,6 +92,7 @@ struct git_iterator {
 	int (*strcomp)(const char *a, const char *b);
 	int (*strncomp)(const char *a, const char *b, size_t n);
 	int (*prefixcomp)(const char *str, const char *prefix);
+	int (*entry_srch)(const void *key, const void *array_member);
 	size_t stat_calls;
 	unsigned int flags;
 };
@@ -188,6 +200,28 @@ GIT_INLINE(int) git_iterator_advance_into(
 	return iter->cb->advance_into(entry, iter);
 }
 
+/* Advance over a directory and check if it contains no files or just
+ * ignored files.
+ *
+ * In a tree or the index, all directories will contain files, but in the
+ * working directory it is possible to have an empty directory tree or a
+ * tree that only contains ignored files.  Many Git operations treat these
+ * cases specially.  This advances over a directory (presumably an
+ * untracked directory) but checks during the scan if there are any files
+ * and any non-ignored files.
+ */
+GIT_INLINE(int) git_iterator_advance_over_with_status(
+	const git_index_entry **entry,
+	git_iterator_status_t *status,
+	git_iterator *iter)
+{
+	if (iter->cb->advance_over_with_status)
+		return iter->cb->advance_over_with_status(entry, status, iter);
+
+	*status = GIT_ITERATOR_STATUS_NORMAL;
+	return git_iterator_advance(entry, iter);
+}
+
 /**
  * Advance into a tree or skip over it if it is empty.
  *
@@ -278,35 +312,12 @@ extern int git_iterator_cmp(
 extern int git_iterator_current_workdir_path(
 	git_buf **path, git_iterator *iter);
 
-/* Return index pointer if index iterator, else NULL */
-extern git_index *git_iterator_get_index(git_iterator *iter);
-
-typedef enum {
-	GIT_ITERATOR_STATUS_NORMAL = 0,
-	GIT_ITERATOR_STATUS_IGNORED = 1,
-	GIT_ITERATOR_STATUS_EMPTY = 2,
-	GIT_ITERATOR_STATUS_FILTERED = 3
-} git_iterator_status_t;
-
-/* Advance over a directory and check if it contains no files or just
- * ignored files.
- *
- * In a tree or the index, all directories will contain files, but in the
- * working directory it is possible to have an empty directory tree or a
- * tree that only contains ignored files.  Many Git operations treat these
- * cases specially.  This advances over a directory (presumably an
- * untracked directory) but checks during the scan if there are any files
- * and any non-ignored files.
- */
-extern int git_iterator_advance_over_with_status(
-	const git_index_entry **entry, git_iterator_status_t *status, git_iterator *iter);
-
 /**
  * Retrieve the index stored in the iterator.
  *
- * Only implemented for the workdir iterator
+ * Only implemented for the workdir and index iterators.
  */
-extern int git_iterator_index(git_index **out, git_iterator *iter);
+extern git_index *git_iterator_index(git_iterator *iter);
 
 typedef int (*git_iterator_walk_cb)(
 	const git_index_entry **entries,

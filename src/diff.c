@@ -826,8 +826,7 @@ static int maybe_modified(
 	 */
 	} else if (git_oid_iszero(&nitem->id) && new_is_workdir) {
 		bool use_ctime = ((diff->diffcaps & GIT_DIFFCAPS_TRUST_CTIME) != 0);
-		git_index *index;
-		git_iterator_index(&index, info->new_iter);
+		git_index *index = git_iterator_index(info->new_iter);
 
 		status = GIT_DELTA_UNMODIFIED;
 
