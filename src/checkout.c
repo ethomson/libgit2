@@ -394,7 +394,7 @@ static int checkout_action_wd_only(
 		git_buf_sets(&data->tmp, wd->path);
 		saved_wd.path = data->tmp.ptr;
 
-		error = git_iterator_advance_over_with_status(
+		error = git_iterator_advance_over(
 			wditem, &untracked_state, workdir);
 		if (error == GIT_ITEROVER)
 			over = true;

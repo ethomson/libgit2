@@ -1124,7 +1124,7 @@ int git_iterator_for_tree(
 		tree_iterator_current,
 		tree_iterator_advance,
 		tree_iterator_advance_into,
-		NULL, /* advance_over_with_status */
+		NULL, /* advance_over */
 		tree_iterator_reset,
 		tree_iterator_reset_range,
 		tree_iterator_at_end,
@@ -1834,17 +1834,21 @@ static void filesystem_iterator_update_ignored(filesystem_iterator *iter)
 	}
 }
 
-bool git_iterator_current_is_ignored(git_iterator *i)
+GIT_INLINE(bool) filesystem_iterator_current_is_ignored(
+	filesystem_iterator *iter)
 {
-	filesystem_iterator *iter = (filesystem_iterator *)i;
-
-	if (i->type != GIT_ITERATOR_TYPE_WORKDIR)
-		return false;
-
 	if (iter->current_is_ignored == GIT_IGNORE_UNCHECKED)
 		filesystem_iterator_update_ignored(iter);
 	
 	return (iter->current_is_ignored == GIT_IGNORE_TRUE);
+}
+
+bool git_iterator_current_is_ignored(git_iterator *i)
+{
+	if (i->type != GIT_ITERATOR_TYPE_WORKDIR)
+		return false;
+
+	return filesystem_iterator_current_is_ignored((filesystem_iterator *)i);
 }
 
 bool git_iterator_current_tree_is_ignored(git_iterator *i)
@@ -1859,7 +1863,7 @@ bool git_iterator_current_tree_is_ignored(git_iterator *i)
 	return (frame->is_ignored == GIT_IGNORE_TRUE);
 }
 
-static int filesystem_iterator_advance_over_with_status(
+static int filesystem_iterator_advance_over(
 	const git_index_entry **out,
 	git_iterator_status_t *status,
 	git_iterator *i)
@@ -1869,18 +1873,17 @@ static int filesystem_iterator_advance_over_with_status(
 	char *base = NULL;
 	int error = 0;
 
+	*out = NULL;
 	*status = GIT_ITERATOR_STATUS_NORMAL;
 	
 	if ((error = git_iterator_current(&entry, i)) < 0)
 		return error;
 	
 	if (!S_ISDIR(entry->mode)) {
-		filesystem_iterator_update_ignored(iter);
-
-		if (iter->current_is_ignored == GIT_IGNORE_TRUE)
+		if (filesystem_iterator_current_is_ignored(iter))
 			*status = GIT_ITERATOR_STATUS_IGNORED;
 
-		return git_iterator_advance(out, i);
+		return filesystem_iterator_advance(out, i);
 	}
 	
 	*status = GIT_ITERATOR_STATUS_EMPTY;
@@ -1891,15 +1894,13 @@ static int filesystem_iterator_advance_over_with_status(
 	
 	/* scan inside directory looking for a non-ignored item */
 	while (entry && !iter->base.prefixcomp(entry->path, base)) {
-		filesystem_iterator_update_ignored(iter);
-
-		if (iter->current_is_ignored == GIT_IGNORE_TRUE) {
+		if (filesystem_iterator_current_is_ignored(iter)) {
 			/* if we found an explicitly ignored item, then update from
 			 * EMPTY to IGNORED
 			 */
 			*status = GIT_ITERATOR_STATUS_IGNORED;
 		} else if (S_ISDIR(entry->mode)) {
-			error = git_iterator_advance_into(&entry, i);
+			error = filesystem_iterator_advance_into(&entry, i);
 			
 			if (!error)
 				continue;
@@ -1917,7 +1918,7 @@ static int filesystem_iterator_advance_over_with_status(
 				/* mark empty dirs ignored */
 //				else
 					iter->current_is_ignored = GIT_IGNORE_TRUE;
-				
+
 				error = 0;
 			} else {
 				 /* real error, stop here */
@@ -1938,8 +1939,10 @@ static int filesystem_iterator_advance_over_with_status(
 		if ((error = git_iterator_advance(&entry, i)) < 0)
 			break;
 	}
-	
-	*out = entry;
+
+	if (!error)
+		*out = entry;
+
 	git__free(base);
 	
 	return error;
@@ -2020,7 +2023,7 @@ int git_iterator_for_filesystem_ext(
 		filesystem_iterator_current,
 		filesystem_iterator_advance,
 		filesystem_iterator_advance_into,
-		filesystem_iterator_advance_over_with_status,
+		filesystem_iterator_advance_over,
 		filesystem_iterator_reset,
 		filesystem_iterator_reset_range,
 		filesystem_iterator_at_end,

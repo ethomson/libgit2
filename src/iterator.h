@@ -66,7 +66,7 @@ typedef struct {
 	int (*current)(const git_index_entry **, git_iterator *);
 	int (*advance)(const git_index_entry **, git_iterator *);
 	int (*advance_into)(const git_index_entry **, git_iterator *);
-	int (*advance_over_with_status)(
+	int (*advance_over)(
 		const git_index_entry **, git_iterator_status_t *, git_iterator *);
 	int (*reset)(git_iterator *);
 	int (*reset_range)(git_iterator *, const char *start, const char *end);
@@ -210,13 +210,13 @@ GIT_INLINE(int) git_iterator_advance_into(
  * untracked directory) but checks during the scan if there are any files
  * and any non-ignored files.
  */
-GIT_INLINE(int) git_iterator_advance_over_with_status(
+GIT_INLINE(int) git_iterator_advance_over(
 	const git_index_entry **entry,
 	git_iterator_status_t *status,
 	git_iterator *iter)
 {
-	if (iter->cb->advance_over_with_status)
-		return iter->cb->advance_over_with_status(entry, status, iter);
+	if (iter->cb->advance_over)
+		return iter->cb->advance_over(entry, status, iter);
 
 	*status = GIT_ITERATOR_STATUS_NORMAL;
 	return git_iterator_advance(entry, iter);
