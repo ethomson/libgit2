@@ -394,6 +394,7 @@ static int iterator_init_common(
 	iter->strcomp = ignore_case ? git__strcasecmp : git__strcmp;
 	iter->strncomp = ignore_case ? git__strncasecmp : git__strncmp;
 	iter->prefixcomp = ignore_case ? git__prefixcmp_icase : git__prefixcmp;
+	iter->entry_srch = ignore_case ? git_index_entry_srch : git_index_entry_isrch;
 
 	if ((error = iterator_range_init(iter, options->start, options->end)) < 0 ||
 		(error = iterator_pathlist_init(iter, &options->pathlist)) < 0)
@@ -1230,6 +1231,13 @@ typedef struct {
 } filesystem_iterator;
 
 
+GIT_INLINE(filesystem_iterator_frame *) filesystem_iterator_parent_frame(
+	filesystem_iterator *iter)
+{
+	return iter->frames.size > 1 ?
+		&iter->frames.ptr[iter->frames.size-2] : NULL;
+}
+
 GIT_INLINE(filesystem_iterator_frame *) filesystem_iterator_current_frame(
 	filesystem_iterator *iter)
 {
@@ -1309,49 +1317,68 @@ static int is_submodule(
 	return 0;
 }
 
+GIT_INLINE(git_dir_flag) filesystem_iterator_dir_flag(git_index_entry *entry)
+{
+#if defined(GIT_WIN32) && !defined(__MINGW32__)
+	return (entry && entry->mode) ?
+		(S_ISDIR(entry->mode) ? GIT_DIR_FLAG_TRUE : GIT_DIR_FLAG_FALSE) :
+		GIT_DIR_FLAG_UNKNOWN;
+#else
+	GIT_UNUSED(entry);
+	return GIT_DIR_FLAG_UNKNOWN;
+#endif
+}
+
 static void filesystem_iterator_frame_push_ignores(
 	filesystem_iterator *iter,
 	filesystem_iterator_entry *frame_entry,
 	filesystem_iterator_frame *new_frame)
 {
 	filesystem_iterator_frame *previous_frame;
-	git_dir_flag dir_flag = GIT_DIR_FLAG_UNKNOWN;
-	const char *path = "";
-
-	printf("%d - %d - %d\n", iterator__honor_ignores(&iter->base),
-		iter->base.flags,
-		(iter->base.flags & GIT_ITERATOR_HONOR_IGNORES)
-		);
+	git_dir_flag dir_flag;
+	const char *path = frame_entry ? frame_entry->path : "";
 
 	if (!iterator__honor_ignores(&iter->base))
 		return;
 
-	if (frame_entry) {
-		dir_flag = S_ISDIR(frame_entry->st.st_mode) ? GIT_DIR_FLAG_TRUE :
-			GIT_DIR_FLAG_FALSE;
+	dir_flag = filesystem_iterator_dir_flag(frame_entry);
 
-		path = frame_entry->path;
-	}
+	printf("dir_flag: %d\n", dir_flag);
 
 	if (git_ignore__lookup(&new_frame->is_ignored,
 			&iter->ignores, path, dir_flag) < 0) {
 		giterr_clear();
 		new_frame->is_ignored = GIT_IGNORE_NOTFOUND;
 	}
+
+    printf("looking up: %s %d %d\n", path, dir_flag, new_frame->is_ignored);
 		
 	/* if this is not the top level directory... */
 	if (frame_entry) {
+		/* push new ignores for files in this directory */
+		/* TODO: fuck this shit */
+		const char *wtf = frame_entry->path, *tmp = frame_entry->path;
+		const char *last = rindex(wtf, '/');
+
+		while ((tmp = index(wtf, '/')) != NULL) {
+			if (tmp == last)
+				break;
+
+			wtf = tmp+1;
+		}
+
 		/* inherit ignored from parent if no rule specified */
 		if (new_frame->is_ignored <= GIT_IGNORE_NOTFOUND) {
-			previous_frame = filesystem_iterator_current_frame(iter);
+			previous_frame = filesystem_iterator_parent_frame(iter);
+
+			printf("INHERIT! %s %d -> %d\n", wtf, new_frame->is_ignored, previous_frame->is_ignored);
+
 			new_frame->is_ignored = previous_frame->is_ignored;
 		}
-			
-		/* push new ignores for files in this directory */
-		git_ignore__push_dir(&iter->ignores, frame_entry->path);
-	}
 
-	printf("%s %d\n", frame_entry ? frame_entry->path : "", new_frame->is_ignored);
+		printf("pushing: %s\n", wtf);
+		git_ignore__push_dir(&iter->ignores, wtf);
+	}
 }
 
 static void filesystem_iterator_frame_pop_ignores(
@@ -1442,6 +1469,29 @@ GIT_INLINE(bool) filesystem_iterator_examine_path(
 	*expected_type_out = expected_type;
 	*match_out = match;
 	return true;
+}
+
+GIT_INLINE(bool) filesystem_iterator_is_dot_git(
+	filesystem_iterator *iter, const char *path, size_t path_len)
+{
+	size_t len;
+
+	if (!iterator__ignore_dot_git(&iter->base))
+		return false;
+
+	if ((len = path_len) < 4)
+		return false;
+
+	if (path[len - 1] == '/')
+		len--;
+
+	if (git__tolower(path[len - 1]) != 't' ||
+		git__tolower(path[len - 2]) != 'i' ||
+		git__tolower(path[len - 3]) != 'g' ||
+		git__tolower(path[len - 4]) != '.')
+		return false;
+
+	return (len == 4 || path[len - 5] == '/');
 }
 
 static int filesystem_iterator_frame_init(
@@ -1538,15 +1588,20 @@ static int filesystem_iterator_frame_init(
 			statbuf.st_mode != GIT_FILEMODE_UNREADABLE)
 			continue;
 
+		if (filesystem_iterator_is_dot_git(iter, path, path_len))
+			continue;
+
 		/* convert submodules to GITLINK and remove trailing slashes */
 		/* TODO: strcasecmp ? */
-		if (S_ISDIR(statbuf.st_mode) &&
-			path_len == CONST_STRLEN(GIT_DIR) &&
-			strcmp(GIT_DIR, path) == 0) {
+		if (S_ISDIR(statbuf.st_mode)) {
 			bool submodule = false;
+
+			printf("CHECKING %s %d %d\n", path, statbuf.st_mode, strcmp(GIT_DIR, path));
 
 			if ((error = is_submodule(&submodule, iter, path, path_len)) < 0)
 				goto done;
+
+			printf("IS SUBMODULE? %s %d\n", path, submodule);
 
 			if (submodule)
 				statbuf.st_mode = GIT_FILEMODE_COMMIT;
@@ -1587,13 +1642,7 @@ static int filesystem_iterator_frame_init(
 	/* sort now that directory suffix is added */
 	git_vector_sort(&new_frame->entries);
 
-	printf("---- entries ----\n");
-	size_t i;
-	for (i = 0; i < new_frame->entries.length; i++) {
-		filesystem_iterator_entry *e = new_frame->entries.contents[i];
-		printf(" %s\n", e->path);
-	}
-	printf("-----------------\n");
+	printf("looking up: %s %d\n", frame_entry ? frame_entry->path : "", new_frame->is_ignored);
 
 done:
 	if (error < 0)
@@ -1658,29 +1707,6 @@ static int filesystem_iterator_current(
 	return 0;
 }
 
-GIT_INLINE(bool) filesystem_iterator_is_dot_git(
-	filesystem_iterator *iter, filesystem_iterator_entry *entry)
-{
-	size_t len;
-
-	if (!iterator__ignore_dot_git(&iter->base))
-		return false;
-
-	if ((len = entry->path_len) < 4)
-		return false;
-
-	if (entry->path[len - 1] == '/')
-		len--;
-
-	if (git__tolower(entry->path[len - 1]) != 't' ||
-		git__tolower(entry->path[len - 2]) != 'i' ||
-		git__tolower(entry->path[len - 3]) != 'g' ||
-		git__tolower(entry->path[len - 4]) != '.')
-		return false;
-
-	return (len == 4 || entry->path[len - 5] == '/');
-}
-
 static int filesystem_iterator_advance(
 	const git_index_entry **out, git_iterator *i)
 {
@@ -1708,9 +1734,6 @@ static int filesystem_iterator_advance(
 		/* we have more entries in the current frame, that's our next entry */
 		entry = frame->entries.contents[frame->next_idx];
 		frame->next_idx++;
-
-		if (filesystem_iterator_is_dot_git(iter, entry))
-			continue;
 
 		if (S_ISDIR(entry->st.st_mode)) {
 			if (iterator__do_autoexpand(iter)) {
@@ -1821,6 +1844,8 @@ static void filesystem_iterator_update_ignored(filesystem_iterator *iter)
 		giterr_clear();
 		iter->current_is_ignored = GIT_IGNORE_NOTFOUND;
 	}
+
+	printf("    update_is_ignored: %s ignored? %d\n", iter->entry.path, iter->current_is_ignored);
 	
 	/* use ignore from containing frame stack */
 	if (iter->current_is_ignored <= GIT_IGNORE_NOTFOUND) {
@@ -1828,16 +1853,16 @@ static void filesystem_iterator_update_ignored(filesystem_iterator *iter)
 		iter->current_is_ignored = frame->is_ignored;
 	}
 
-	printf("    update_ignored: %s ignored? %d\n", iter->entry.path, iter->current_is_ignored);
+	printf("    update_is_ignored after: %s ignored? %d\n", iter->entry.path, iter->current_is_ignored);
 }
 
 bool git_iterator_current_is_ignored(git_iterator *i)
 {
 	filesystem_iterator *iter = (filesystem_iterator *)i;
-	
-	if (i->type != GIT_ITERATOR_TYPE_FS)
+
+	if (i->type != GIT_ITERATOR_TYPE_WORKDIR)
 		return false;
-	
+
 	if (iter->current_is_ignored == GIT_IGNORE_UNCHECKED)
 		filesystem_iterator_update_ignored(iter);
 	
@@ -2097,6 +2122,8 @@ int git_iterator_for_workdir_ext(
 	git_tree *tree,
 	git_iterator_options *options)
 {
+	int error;
+
 	if (!repo_workdir) {
 		if (git_repository__ensure_not_bare(repo, "scan working directory") < 0)
 			return GIT_EBAREREPO;
@@ -2108,8 +2135,13 @@ int git_iterator_for_workdir_ext(
 	options->flags |= GIT_ITERATOR_HONOR_IGNORES |
 		GIT_ITERATOR_IGNORE_DOT_GIT;
 
-	return git_iterator_for_filesystem_ext(
+	error = git_iterator_for_filesystem_ext(
 		out, repo, repo_workdir, index, tree, options);
+
+	/* TODO: fuck this is stupid */
+	(*out)->type = GIT_ITERATOR_TYPE_WORKDIR;
+
+	return error;
 }
 
 

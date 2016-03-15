@@ -445,6 +445,9 @@ static int pathspec_match_from_iterator(
 			continue;
 		}
 
+printf("FUCK index: %p\n", index);
+//printf("FUCK index: %p %d\n", index, git_iterator_current_is_ignored(iter));
+
 		/* check if path is ignored and untracked */
 		if (index != NULL &&
 			git_iterator_current_is_ignored(iter) &&
