@@ -1341,6 +1341,7 @@ static void filesystem_iterator_frame_push_ignores(
 	if (!iterator__honor_ignores(&iter->base))
 		return;
 
+	/* TODO: nope */
 	dir_flag = filesystem_iterator_dir_flag(frame_entry);
 
 	if (git_ignore__lookup(&new_frame->is_ignored,
@@ -1469,7 +1470,37 @@ GIT_INLINE(bool) filesystem_iterator_is_dot_git(
 	return (len == 4 || path[len - 5] == '/');
 }
 
-static int filesystem_iterator_frame_init(
+static filesystem_iterator_entry *filesystem_iterator_entry_init(
+	const char *path,
+	size_t path_len,
+	struct stat *statbuf,
+	iterator_pathlist_search_t pathlist_match)
+{
+	filesystem_iterator_entry *entry;
+	size_t entry_size;
+
+	/* Make sure to append two bytes, one for the path's null
+	 * termination, one for a possible trailing '/' for folders.
+	 */
+	GITERR_CHECK_ALLOC_ADD3(&entry_size,
+		sizeof(filesystem_iterator_entry), path_len, 2);
+
+	entry = git__malloc(entry_size);
+	entry->path_len = path_len;
+	entry->match = pathlist_match;
+	memcpy(entry->path, path, path_len);
+	memcpy(&entry->st, statbuf, sizeof(struct stat));
+
+	/* Suffix directory paths with a '/' */
+	if (S_ISDIR(entry->st.st_mode))
+		entry->path[entry->path_len++] = '/';
+
+	entry->path[entry->path_len] = '\0';
+
+	return entry;
+}
+
+static int filesystem_iterator_frame_push(
 	filesystem_iterator *iter,
 	filesystem_iterator_entry *frame_entry)
 {
@@ -1479,7 +1510,7 @@ static int filesystem_iterator_frame_init(
 	const char *path;
 	filesystem_iterator_entry *entry;
 	struct stat statbuf;
-	size_t path_len, entry_size;
+	size_t path_len;
 	int error;
 
 	if (iter->frames.size == FILESYSTEM_MAX_DEPTH) {
@@ -1510,8 +1541,7 @@ static int filesystem_iterator_frame_init(
 		goto done;
 	}
 
-	/* TODO: find a better initial number here... */
-	if ((error = git_vector_init(&new_frame->entries, 128,
+	if ((error = git_vector_init(&new_frame->entries, 64,
 			iterator__ignore_case(&iter->base) ?
 			filesystem_iterator_entry_cmp_icase :
 			filesystem_iterator_entry_cmp)) < 0)
@@ -1584,28 +1614,10 @@ static int filesystem_iterator_frame_init(
 		if (dir_expected && !S_ISDIR(statbuf.st_mode))
 			continue;
 
-		/* Make sure to append two bytes, one for the path's null
-		 * termination, one for a possible trailing '/' for folders.
-		 */
-		GITERR_CHECK_ALLOC_ADD3(&entry_size,
-			sizeof(filesystem_iterator_entry), path_len, 2);
+		entry = filesystem_iterator_entry_init(
+			path, path_len, &statbuf, pathlist_match);
+		GITERR_CHECK_ALLOC(entry);
 		
-		entry = git__malloc(entry_size);
-		entry->path_len = path_len;
-		entry->match = pathlist_match;
-		memcpy(entry->path, path, path_len);
-		memcpy(&entry->st, &statbuf, sizeof(statbuf));
-
-		/* Suffix directory paths with a '/' */
-		if (S_ISDIR(entry->st.st_mode))
-			entry->path[entry->path_len++] = '/';
-
-		entry->path[entry->path_len] = '\0';
-		
-		/* record whether this path was explicitly found in the path list
-		 * or whether we're only examining it because something beneath it
-		 * is in the path list.
-		 */
 		git_vector_insert(&new_frame->entries, entry);
 	}
 	
@@ -1705,7 +1717,7 @@ static int filesystem_iterator_advance(
 
 		if (S_ISDIR(entry->st.st_mode)) {
 			if (iterator__do_autoexpand(iter)) {
-				error = filesystem_iterator_frame_init(iter, entry);
+				error = filesystem_iterator_frame_push(iter, entry);
 
 				/* may get GIT_ENOTFOUND due to races or permission problems
 				 * that we want to quietly swallow
@@ -1761,7 +1773,7 @@ static int filesystem_iterator_advance_into(
 		/* TODO: i assume this should actually be 0 on GIT_ENOTFOUND, as in
 		 * the not-a-directory case
 		 */
-		if ((error = filesystem_iterator_frame_init(iter, prev_entry)) < 0)
+		if ((error = filesystem_iterator_frame_push(iter, prev_entry)) < 0)
 			return error;
 	}
 	
@@ -1953,7 +1965,7 @@ static int filesystem_iterator_init(filesystem_iterator *iter)
 			".gitignore", &iter->ignores)) < 0)
 		return error;
 
-	if ((error = filesystem_iterator_frame_init(iter, NULL)) < 0)
+	if ((error = filesystem_iterator_frame_push(iter, NULL)) < 0)
 		return error;
 
 	iter->base.flags &= ~GIT_ITERATOR_FIRST_ACCESS;
