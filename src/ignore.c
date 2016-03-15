@@ -420,7 +420,6 @@ int git_ignore__lookup(
 	}
 
 cleanup:
-	printf("git_ignore__lookup: %s %d\n", pathname, *out);
 	git_attr_path__free(&path);
 	return 0;
 }
