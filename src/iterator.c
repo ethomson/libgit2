@@ -1556,6 +1556,8 @@ static int filesystem_iterator_frame_init(
 			error = 0;
 		}
 
+		iter->base.stat_calls++;
+
 		/* Ignore wacky things in the filesystem */
 		if (!S_ISDIR(statbuf.st_mode) &&
 			!S_ISREG(statbuf.st_mode) &&
