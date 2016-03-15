@@ -1389,17 +1389,17 @@ static void filesystem_iterator_frame_pop_ignores(
 }
 
 GIT_INLINE(bool) filesystem_iterator_examine_path(
-	int *expected_type_out,
+	bool *is_dir_out,
 	iterator_pathlist_search_t *match_out,
 	filesystem_iterator *iter,
 	filesystem_iterator_entry *frame_entry,
 	const char *path,
 	size_t path_len)
 {
-	int expected_type = 0;
+	bool is_dir = 0;
 	iterator_pathlist_search_t match = ITERATOR_PATHLIST_FULL;
 
-	*expected_type_out = 0;
+	*is_dir_out = false;
 	*match_out = ITERATOR_PATHLIST_NONE;
 
 	if (iter->base.start_len) {
@@ -1411,7 +1411,7 @@ GIT_INLINE(bool) filesystem_iterator_examine_path(
 		 */
 		if (cmp == 0) {
 			if (iter->base.start[path_len] == '/')
-				*expected_type_out = S_IFDIR;
+				is_dir = true;
 
 			else if (iter->base.start[path_len] != '\0')
 				cmp = -1;
@@ -1436,8 +1436,11 @@ GIT_INLINE(bool) filesystem_iterator_examine_path(
 	 * to avoid a `stat` if we're not interested in the path.
 	 */
 	if (iter->base.pathlist.length) {
+		printf("parent ?? %p %d\n", frame_entry, frame_entry ? frame_entry->match : -999);
+
 		/* if our parent was explicitly included, so too are we */
-		if (frame_entry && frame_entry->match == ITERATOR_PATHLIST_IS_DIR)
+		if (frame_entry && (frame_entry->match == ITERATOR_PATHLIST_IS_DIR ||
+			frame_entry->match == ITERATOR_PATHLIST_IS_FILE))
 			match = ITERATOR_PATHLIST_FULL;
 		else
 			match = iterator_pathlist_search(&iter->base, path, path_len);
@@ -1448,25 +1451,12 @@ GIT_INLINE(bool) filesystem_iterator_examine_path(
 			return false;
 
 		/* Ensure that the pathlist entry lines up with what we expected */
-		switch (match) {
-			case ITERATOR_PATHLIST_IS_DIR:
-			case ITERATOR_PATHLIST_IS_PARENT:
-				expected_type = S_IFDIR;
-				break;
-			case ITERATOR_PATHLIST_IS_FILE:
-				if (expected_type == S_IFDIR)
-					return false;
-
-				expected_type = S_IFREG;
-				break;
-			case ITERATOR_PATHLIST_FULL:
-				break;
-			default:
-				assert(!"unhandled pathlist match result");
-		}
+		if (match == ITERATOR_PATHLIST_IS_DIR ||
+			match == ITERATOR_PATHLIST_IS_PARENT)
+			is_dir = true;
 	}
 
-	*expected_type_out = expected_type;
+	*is_dir_out = is_dir;
 	*match_out = match;
 	return true;
 }
@@ -1547,7 +1537,7 @@ static int filesystem_iterator_frame_init(
 
 	while ((error = git_path_diriter_next(&diriter)) == 0) {
 		iterator_pathlist_search_t pathlist_match = ITERATOR_PATHLIST_FULL;
-		int type_match = 0;
+		bool dir_expected = false;
 
 		if ((error = git_path_diriter_fullpath(&path, &path_len, &diriter)) < 0)
 			goto done;
@@ -1563,7 +1553,7 @@ static int filesystem_iterator_frame_init(
 		 * whether it's a directory yet or not, so this can give us an
 		 * expected type (S_IFDIR or S_IFREG) that we should examine)
 		 */
-		if (!filesystem_iterator_examine_path(&type_match, &pathlist_match,
+		if (!filesystem_iterator_examine_path(&dir_expected, &pathlist_match,
 			iter, frame_entry, path, path_len))
 			continue;
 
@@ -1608,9 +1598,9 @@ static int filesystem_iterator_frame_init(
 		}
 
 		/* Ensure that the pathlist entry lines up with what we expected */
-		if (type_match && (statbuf.st_mode & S_IFMT) != type_match)
+		if (dir_expected && !S_ISDIR(statbuf.st_mode))
 			continue;
-		
+
 		/* Make sure to append two bytes, one for the path's null
 		 * termination, one for a possible trailing '/' for folders.
 		 */
@@ -1736,6 +1726,9 @@ static int filesystem_iterator_advance(
 		frame->next_idx++;
 
 		if (S_ISDIR(entry->st.st_mode)) {
+			printf("is a dir: %s - autoexpanding: %d\n", entry->path,
+				iterator__do_autoexpand(iter));
+
 			if (iterator__do_autoexpand(iter)) {
 				error = filesystem_iterator_frame_init(iter, entry);
 
