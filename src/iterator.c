@@ -1663,12 +1663,12 @@ static int filesystem_iterator_current(
 
 	if (!iterator__has_been_accessed(i))
 		return iter->base.cb->advance(out, i);
-	
+
 	if (!iter->frames.size) {
 		*out = NULL;
 		return GIT_ITEROVER;
 	}
-	
+
 	*out = &iter->entry;
 	return 0;
 }
@@ -1735,7 +1735,7 @@ static int filesystem_iterator_advance_into(
 	filesystem_iterator_frame *frame;
 	filesystem_iterator_entry *prev_entry;
 	int error;
-	
+
 	if (out)
 		*out = NULL;
 
@@ -1774,7 +1774,8 @@ int git_iterator_current_workdir_path(git_buf **out, git_iterator *i)
 	filesystem_iterator *iter = (filesystem_iterator *)i;
 	const git_index_entry *entry;
 
-	if (i->type != GIT_ITERATOR_TYPE_FS) {
+	if (i->type != GIT_ITERATOR_TYPE_FS &&
+		i->type != GIT_ITERATOR_TYPE_WORKDIR) {
 		*out = NULL;
 		return 0;
 	}
@@ -1783,6 +1784,7 @@ int git_iterator_current_workdir_path(git_buf **out, git_iterator *i)
 
 	if (git_iterator_current(&entry, i) < 0 ||
 		git_buf_puts(&iter->current_path, entry->path) < 0)
+		return -1;
 		
 	*out = &iter->current_path;
 	return 0;
@@ -1852,7 +1854,7 @@ static int filesystem_iterator_advance_over_with_status(
 	const git_index_entry *entry;
 	char *base = NULL;
 	int error = 0;
-	
+
 	*status = GIT_ITERATOR_STATUS_NORMAL;
 	
 	if ((error = git_iterator_current(&entry, i)) < 0)
@@ -2427,7 +2429,8 @@ git_index *git_iterator_index(git_iterator *iter)
 	if (iter->type == GIT_ITERATOR_TYPE_INDEX)
 		return ((index_iterator *)iter)->index;
 
-	if (iter->type == GIT_ITERATOR_TYPE_FS)
+	if (iter->type == GIT_ITERATOR_TYPE_FS ||
+		iter->type == GIT_ITERATOR_TYPE_WORKDIR)
 		return ((filesystem_iterator *)iter)->index;
 
 	return NULL;
