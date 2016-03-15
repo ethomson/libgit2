@@ -2009,6 +2009,7 @@ int git_iterator_for_filesystem_ext(
 	const char *root,
 	git_index *index,
 	git_tree *tree,
+	git_iterator_type_t type,
 	git_iterator_options *options)
 {
 	filesystem_iterator *iter;
@@ -2051,7 +2052,7 @@ int git_iterator_for_filesystem_ext(
 	if ((error = git_buf_puts(&iter->current_path, iter->root)) < 0)
 		goto on_error;
 
-	iter->base.type = GIT_ITERATOR_TYPE_FS;
+	iter->base.type = type;
 	iter->base.cb = &callbacks;
 
 
@@ -2088,8 +2089,8 @@ int git_iterator_for_filesystem(
 	const char *root,
 	git_iterator_options *options)
 {
-	return git_iterator_for_filesystem_ext(
-		out, NULL, root, NULL, NULL, options);
+	return git_iterator_for_filesystem_ext(out,
+		NULL, root, NULL, NULL, GIT_ITERATOR_TYPE_FS, options);
 }
 
 int git_iterator_for_workdir_ext(
@@ -2098,8 +2099,9 @@ int git_iterator_for_workdir_ext(
 	const char *repo_workdir,
 	git_index *index,
 	git_tree *tree,
-	git_iterator_options *options)
+	git_iterator_options *given_opts)
 {
+	git_iterator_options options = GIT_ITERATOR_OPTIONS_INIT;
 	int error;
 
 	if (!repo_workdir) {
@@ -2109,15 +2111,13 @@ int git_iterator_for_workdir_ext(
 		repo_workdir = git_repository_workdir(repo);
 	}
 
-	/* TODO: maybe don't modify the caller's struct */
-	options->flags |= GIT_ITERATOR_HONOR_IGNORES |
+	/* upgrade to a workdir iterator, adding necessary internal flags */
+	memcpy(&options, given_opts, sizeof(git_iterator_options));
+	options.flags |= GIT_ITERATOR_HONOR_IGNORES |
 		GIT_ITERATOR_IGNORE_DOT_GIT;
 
-	error = git_iterator_for_filesystem_ext(
-		out, repo, repo_workdir, index, tree, options);
-
-	/* TODO: fuck this is stupid */
-	(*out)->type = GIT_ITERATOR_TYPE_WORKDIR;
+	error = git_iterator_for_filesystem_ext(out,
+		repo, repo_workdir, index, tree, GIT_ITERATOR_TYPE_WORKDIR, &options);
 
 	return error;
 }
