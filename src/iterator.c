@@ -1343,16 +1343,12 @@ static void filesystem_iterator_frame_push_ignores(
 
 	dir_flag = filesystem_iterator_dir_flag(frame_entry);
 
-	printf("dir_flag: %d\n", dir_flag);
-
 	if (git_ignore__lookup(&new_frame->is_ignored,
 			&iter->ignores, path, dir_flag) < 0) {
 		giterr_clear();
 		new_frame->is_ignored = GIT_IGNORE_NOTFOUND;
 	}
 
-    printf("looking up: %s %d %d\n", path, dir_flag, new_frame->is_ignored);
-		
 	/* if this is not the top level directory... */
 	if (frame_entry) {
 		/* push new ignores for files in this directory */
@@ -1371,12 +1367,9 @@ static void filesystem_iterator_frame_push_ignores(
 		if (new_frame->is_ignored <= GIT_IGNORE_NOTFOUND) {
 			previous_frame = filesystem_iterator_parent_frame(iter);
 
-			printf("INHERIT! %s %d -> %d\n", wtf, new_frame->is_ignored, previous_frame->is_ignored);
-
 			new_frame->is_ignored = previous_frame->is_ignored;
 		}
 
-		printf("pushing: %s\n", wtf);
 		git_ignore__push_dir(&iter->ignores, wtf);
 	}
 }
@@ -1417,16 +1410,12 @@ GIT_INLINE(bool) filesystem_iterator_examine_path(
 				cmp = -1;
 		}
 
-		printf("path: %s / start: %s / started?: %d [%d]\n", path, iter->base.start, (cmp >= 0), cmp);
-
 		if (cmp < 0)
 			return false;
 	}
 
 	if (iter->base.end_len) {
 		int cmp = iter->base.strncomp(path, iter->base.end, iter->base.end_len);
-
-		printf("path: %s / end: %s / ended?: %d\n", path, iter->base.end, (cmp > 0));
 
 		if (cmp > 0)
 			return false;
@@ -1436,16 +1425,12 @@ GIT_INLINE(bool) filesystem_iterator_examine_path(
 	 * to avoid a `stat` if we're not interested in the path.
 	 */
 	if (iter->base.pathlist.length) {
-		printf("parent ?? %p %d\n", frame_entry, frame_entry ? frame_entry->match : -999);
-
 		/* if our parent was explicitly included, so too are we */
 		if (frame_entry && (frame_entry->match == ITERATOR_PATHLIST_IS_DIR ||
 			frame_entry->match == ITERATOR_PATHLIST_IS_FILE))
 			match = ITERATOR_PATHLIST_FULL;
 		else
 			match = iterator_pathlist_search(&iter->base, path, path_len);
-
-		printf("path: %s / match: %d\n", path, match);
 
 		if (match == ITERATOR_PATHLIST_NOT_FOUND)
 			return false;
@@ -1586,12 +1571,8 @@ static int filesystem_iterator_frame_init(
 		if (S_ISDIR(statbuf.st_mode)) {
 			bool submodule = false;
 
-			printf("CHECKING %s %d %d\n", path, statbuf.st_mode, strcmp(GIT_DIR, path));
-
 			if ((error = is_submodule(&submodule, iter, path, path_len)) < 0)
 				goto done;
-
-			printf("IS SUBMODULE? %s %d\n", path, submodule);
 
 			if (submodule)
 				statbuf.st_mode = GIT_FILEMODE_COMMIT;
@@ -1631,8 +1612,6 @@ static int filesystem_iterator_frame_init(
 
 	/* sort now that directory suffix is added */
 	git_vector_sort(&new_frame->entries);
-
-	printf("looking up: %s %d\n", frame_entry ? frame_entry->path : "", new_frame->is_ignored);
 
 done:
 	if (error < 0)
@@ -1675,9 +1654,6 @@ static void filesystem_iterator_set_current(
 	iter->entry.path = entry->path;
 
 	iter->current_is_ignored = GIT_IGNORE_UNCHECKED;
-
-    printf("    %s ignored? %d\n",
-		entry->path, iter->current_is_ignored);
 }
 
 static int filesystem_iterator_current(
@@ -1726,9 +1702,6 @@ static int filesystem_iterator_advance(
 		frame->next_idx++;
 
 		if (S_ISDIR(entry->st.st_mode)) {
-			printf("is a dir: %s - autoexpanding: %d\n", entry->path,
-				iterator__do_autoexpand(iter));
-
 			if (iterator__do_autoexpand(iter)) {
 				error = filesystem_iterator_frame_init(iter, entry);
 
@@ -1765,7 +1738,7 @@ static int filesystem_iterator_advance_into(
 	
 	if (out)
 		*out = NULL;
-	
+
 	if ((frame = filesystem_iterator_current_frame(iter)) == NULL)
 		return GIT_ITEROVER;
 	
@@ -1838,15 +1811,11 @@ static void filesystem_iterator_update_ignored(filesystem_iterator *iter)
 		iter->current_is_ignored = GIT_IGNORE_NOTFOUND;
 	}
 
-	printf("    update_is_ignored: %s ignored? %d\n", iter->entry.path, iter->current_is_ignored);
-	
 	/* use ignore from containing frame stack */
 	if (iter->current_is_ignored <= GIT_IGNORE_NOTFOUND) {
 		frame = filesystem_iterator_current_frame(iter);
 		iter->current_is_ignored = frame->is_ignored;
 	}
-
-	printf("    update_is_ignored after: %s ignored? %d\n", iter->entry.path, iter->current_is_ignored);
 }
 
 bool git_iterator_current_is_ignored(git_iterator *i)
