@@ -1207,6 +1207,7 @@ typedef struct {
 	git_vector entries;
 	size_t next_idx;
 
+	size_t path_len;
 	int is_ignored;
 } filesystem_iterator_frame;
 
@@ -1341,7 +1342,9 @@ static void filesystem_iterator_frame_push_ignores(
 	if (!iterator__honor_ignores(&iter->base))
 		return;
 
-	/* TODO: nope */
+	/* TODO: nope.  but why do we need a dir_flag here at all?  this is always
+	 * a directory, no?
+	 */
 	dir_flag = filesystem_iterator_dir_flag(frame_entry);
 
 	if (git_ignore__lookup(&new_frame->is_ignored,
@@ -1352,26 +1355,18 @@ static void filesystem_iterator_frame_push_ignores(
 
 	/* if this is not the top level directory... */
 	if (frame_entry) {
+		const char *relative_path;
+
+		previous_frame = filesystem_iterator_parent_frame(iter);
+
 		/* push new ignores for files in this directory */
-		/* TODO: fuck this shit */
-		const char *wtf = frame_entry->path, *tmp = frame_entry->path;
-		const char *last = rindex(wtf, '/');
-
-		while ((tmp = index(wtf, '/')) != NULL) {
-			if (tmp == last)
-				break;
-
-			wtf = tmp+1;
-		}
+		relative_path = frame_entry->path + previous_frame->path_len;
 
 		/* inherit ignored from parent if no rule specified */
-		if (new_frame->is_ignored <= GIT_IGNORE_NOTFOUND) {
-			previous_frame = filesystem_iterator_parent_frame(iter);
-
+		if (new_frame->is_ignored <= GIT_IGNORE_NOTFOUND)
 			new_frame->is_ignored = previous_frame->is_ignored;
-		}
 
-		git_ignore__push_dir(&iter->ignores, wtf);
+		git_ignore__push_dir(&iter->ignores, relative_path);
 	}
 }
 
@@ -1533,6 +1528,8 @@ static int filesystem_iterator_frame_push(
 		error = -1;
 		goto done;
 	}
+
+	new_frame->path_len = frame_entry ? frame_entry->path_len : 0;
 
 	/* Any error here is equivalent to the dir not existing, skip over it */
 	if ((error = git_path_diriter_init(
