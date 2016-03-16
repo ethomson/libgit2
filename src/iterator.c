@@ -1648,11 +1648,11 @@ static void filesystem_iterator_set_current(
 	filesystem_iterator *iter,
 	filesystem_iterator_entry *entry)
 {
-	iter->entry.ctime.seconds = entry->st.st_ctimespec.tv_sec;
-	iter->entry.ctime.nanoseconds = entry->st.st_ctimespec.tv_nsec;
+	iter->entry.ctime.seconds = entry->st.st_ctime;
+	iter->entry.ctime.nanoseconds = entry->st.st_ctime_nsec;
 
-	iter->entry.mtime.seconds = entry->st.st_mtimespec.tv_sec;
-	iter->entry.mtime.nanoseconds = entry->st.st_mtimespec.tv_nsec;
+	iter->entry.mtime.seconds = entry->st.st_mtime;
+	iter->entry.mtime.nanoseconds = entry->st.st_mtime_nsec;
 
 	iter->entry.dev = entry->st.st_dev;
 	iter->entry.ino = entry->st.st_ino;
