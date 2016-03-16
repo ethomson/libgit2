@@ -1342,13 +1342,8 @@ static void filesystem_iterator_frame_push_ignores(
 	if (!iterator__honor_ignores(&iter->base))
 		return;
 
-	/* TODO: nope.  but why do we need a dir_flag here at all?  this is always
-	 * a directory, no?
-	 */
-	dir_flag = filesystem_iterator_dir_flag(frame_entry);
-
 	if (git_ignore__lookup(&new_frame->is_ignored,
-			&iter->ignores, path, dir_flag) < 0) {
+			&iter->ignores, path, GIT_DIR_FLAG_TRUE) < 0) {
 		giterr_clear();
 		new_frame->is_ignored = GIT_IGNORE_NOTFOUND;
 	}
