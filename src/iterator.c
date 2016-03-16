@@ -1599,7 +1599,6 @@ static int filesystem_iterator_frame_push(
 			continue;
 
 		/* convert submodules to GITLINK and remove trailing slashes */
-		/* TODO: strcasecmp ? */
 		if (S_ISDIR(statbuf.st_mode)) {
 			bool submodule = false;
 
@@ -1770,9 +1769,6 @@ static int filesystem_iterator_advance_into(
 			!S_ISDIR(prev_entry->st.st_mode))
 			return 0;
 
-		/* TODO: i assume this should actually be 0 on GIT_ENOTFOUND, as in
-		 * the not-a-directory case
-		 */
 		if ((error = filesystem_iterator_frame_push(iter, prev_entry)) < 0)
 			return error;
 	}
