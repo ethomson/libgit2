@@ -2810,149 +2810,34 @@ int git_index_entry_is_conflict(const git_index_entry *entry)
 	return (GIT_IDXENTRY_STAGE(entry) > 0);
 }
 
-typedef struct read_tree_data {
-	git_index *index;
-	git_vector *old_entries;
-	git_vector *new_entries;
-	git_vector_cmp entry_cmp;
-	git_tree_cache *tree;
-} read_tree_data;
-
-static int read_tree_cb(
-	const char *root, const git_tree_entry *tentry, void *payload)
-{
-	read_tree_data *data = payload;
-	git_index_entry *entry = NULL, *old_entry;
-	git_buf path = GIT_BUF_INIT;
-	size_t pos;
-
-	if (git_tree_entry__is_tree(tentry))
-		return 0;
-
-	if (git_buf_joinpath(&path, root, tentry->filename) < 0)
-		return -1;
-
-	if (index_entry_create(&entry, INDEX_OWNER(data->index), path.ptr, false) < 0)
-		return -1;
-
-	entry->mode = tentry->attr;
-	git_oid_cpy(&entry->id, git_tree_entry_id(tentry));
-
-	/* look for corresponding old entry and copy data to new entry */
-	if (data->old_entries != NULL &&
-		!index_find_in_entries(
-			&pos, data->old_entries, data->entry_cmp, path.ptr, 0, 0) &&
-		(old_entry = git_vector_get(data->old_entries, pos)) != NULL &&
-		entry->mode == old_entry->mode &&
-		git_oid_equal(&entry->id, &old_entry->id))
-	{
-		index_entry_cpy(entry, old_entry);
-		entry->flags_extended = 0;
-	}
-
-	index_entry_adjust_namemask(entry, path.size);
-	git_buf_free(&path);
-
-	if (git_vector_insert(data->new_entries, entry) < 0) {
-		index_entry_free(entry);
-		return -1;
-	}
-
-	return 0;
-}
-
-int git_index_read_tree(git_index *index, const git_tree *tree)
-{
-	int error = 0;
-	git_vector entries = GIT_VECTOR_INIT;
-	git_idxmap *entries_map;
-	read_tree_data data;
-	size_t i;
-	git_index_entry *e;
-
-	if (git_idxmap_alloc(&entries_map) < 0)
-		return -1;
-
-	git_vector_set_cmp(&entries, index->entries._cmp); /* match sort */
-
-	data.index = index;
-	data.old_entries = &index->entries;
-	data.new_entries = &entries;
-	data.entry_cmp   = index->entries_search;
-
-	index->tree = NULL;
-	git_pool_clear(&index->tree_pool);
-
-	git_vector_sort(&index->entries);
-
-	if ((error = git_tree_walk(tree, GIT_TREEWALK_POST, read_tree_cb, &data)) < 0)
-		goto cleanup;
-
-	if (index->ignore_case)
-		kh_resize(idxicase, (khash_t(idxicase) *) entries_map, entries.length);
-	else
-		kh_resize(idx, entries_map, entries.length);
-
-	git_vector_foreach(&entries, i, e) {
-		INSERT_IN_MAP_EX(index, entries_map, e, error);
-
-		if (error < 0) {
-			giterr_set(GITERR_INDEX, "failed to insert entry into map");
-			return error;
-		}
-	}
-
-	error = 0;
-
-	git_vector_sort(&entries);
-
-	if ((error = git_index_clear(index)) < 0) {
-		/* well, this isn't good */;
-	} else {
-		git_vector_swap(&entries, &index->entries);
-		entries_map = git__swap(index->entries_map, entries_map);
-	}
-
-cleanup:
-	git_vector_free(&entries);
-	git_idxmap_free(entries_map);
-	if (error < 0)
-		return error;
-
-	error = git_tree_cache_read_tree(&index->tree, tree, &index->tree_pool);
-
-	return error;
-}
-
-int git_index_read_index(
+static int git_index__read_iterator(
 	git_index *index,
-	const git_index *new_index)
+	git_iterator *new_iterator,
+	size_t size_hint)
 {
 	git_vector new_entries = GIT_VECTOR_INIT,
 		remove_entries = GIT_VECTOR_INIT;
 	git_idxmap *new_entries_map = NULL;
 	git_iterator *index_iterator = NULL;
-	git_iterator *new_iterator = NULL;
 	git_iterator_options opts = GIT_ITERATOR_OPTIONS_INIT;
 	const git_index_entry *old_entry, *new_entry;
 	git_index_entry *entry;
 	size_t i;
 	int error;
 
-	if ((error = git_vector_init(&new_entries, new_index->entries.length, index->entries._cmp)) < 0 ||
+	if ((error = git_vector_init(&new_entries, size_hint, index->entries._cmp)) < 0 ||
 		(error = git_vector_init(&remove_entries, index->entries.length, NULL)) < 0 ||
 		(error = git_idxmap_alloc(&new_entries_map)) < 0)
 		goto done;
 
 	if (index->ignore_case)
-		kh_resize(idxicase, (khash_t(idxicase) *) new_entries_map, new_index->entries.length);
+		kh_resize(idxicase, (khash_t(idxicase) *) new_entries_map, size_hint);
 	else
-		kh_resize(idx, new_entries_map, new_index->entries.length);
+		kh_resize(idx, new_entries_map, size_hint);
 
 	opts.flags = GIT_ITERATOR_DONT_IGNORE_CASE;
 
-	if ((error = git_iterator_for_index(&index_iterator, git_index_owner(index), index, &opts)) < 0 ||
-		(error = git_iterator_for_index(&new_iterator, git_index_owner(new_index), (git_index *)new_index, &opts)) < 0)
+	if ((error = git_iterator_for_index(&index_iterator, git_index_owner(index), index, &opts)) < 0)
 		goto done;
 
 	if (((error = git_iterator_current(&old_entry, index_iterator)) < 0 &&
@@ -3050,6 +2935,45 @@ done:
 	git_vector_free(&new_entries);
 	git_vector_free(&remove_entries);
 	git_iterator_free(index_iterator);
+	return error;
+}
+
+int git_index_read_tree(git_index *index, const git_tree *new_tree)
+{
+	git_iterator *new_iterator = NULL;
+	git_iterator_options opts = GIT_ITERATOR_OPTIONS_INIT;
+	int error;
+
+	opts.flags = GIT_ITERATOR_DONT_IGNORE_CASE;
+
+	if ((error = git_iterator_for_tree(&new_iterator, (git_tree *)new_tree, &opts)) < 0)
+		return error;
+
+	index->tree = NULL;
+	git_pool_clear(&index->tree_pool);
+
+	if ((error = git_index__read_iterator(index, new_iterator, new_tree->entries.size)) == 0)
+		error = git_tree_cache_read_tree(&index->tree, new_tree, &index->tree_pool);
+
+	git_iterator_free(new_iterator);
+	return error;
+}
+
+int git_index_read_index(
+	git_index *index,
+	const git_index *new_index)
+{
+	git_iterator *new_iterator = NULL;
+	git_iterator_options opts = GIT_ITERATOR_OPTIONS_INIT;
+	int error;
+
+	opts.flags = GIT_ITERATOR_DONT_IGNORE_CASE;
+
+	if ((error = git_iterator_for_index(&new_iterator, git_index_owner(new_index), (git_index *)new_index, &opts)) < 0)
+		return error;
+
+	error = git_index__read_iterator(index, new_iterator, new_index->entries.length);
+
 	git_iterator_free(new_iterator);
 	return error;
 }

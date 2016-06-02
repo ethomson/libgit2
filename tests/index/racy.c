@@ -248,7 +248,19 @@ void test_index_racy__reading_clears_uptodate_bit(void)
 	git_index_free(index);
 }
 
-void test_index_racy__read_tree_clears_uptodate_bit(void)
+static void set_executable(git_index *index, const char *path)
+{
+	const git_index_entry *src;
+	git_index_entry dst;
+
+	cl_assert((src = git_index_get_bypath(index, path, 0)));
+
+	memcpy(&dst, src, sizeof(git_index_entry));
+	dst.mode = GIT_FILEMODE_BLOB_EXECUTABLE;
+	cl_git_pass(git_index_add(index, &dst));
+}
+
+void test_index_racy__read_tree_handles_uptodate_bit(void)
 {
 	git_index *index;
 	git_tree *tree;
@@ -262,12 +274,33 @@ void test_index_racy__read_tree_clears_uptodate_bit(void)
 	cl_git_pass(git_tree_lookup(&tree, g_repo, &id));
 	cl_git_pass(git_index_read_tree(index, tree));
 
-	/* ensure that no files are uptodate */
+	/* we re-read the same tree - ensure all files are uptodate */
+	cl_assert((entry = git_index_get_bypath(index, "A", 0)));
+	cl_assert_equal_i(GIT_IDXENTRY_UPTODATE,
+		(entry->flags_extended & GIT_IDXENTRY_UPTODATE));
+
+	cl_assert((entry = git_index_get_bypath(index, "B", 0)));
+	cl_assert_equal_i(GIT_IDXENTRY_UPTODATE,
+		(entry->flags_extended & GIT_IDXENTRY_UPTODATE));
+
+	cl_assert((entry = git_index_get_bypath(index, "C", 0)));
+	cl_assert_equal_i(GIT_IDXENTRY_UPTODATE,
+		(entry->flags_extended & GIT_IDXENTRY_UPTODATE));
+
+	/* change A and C, re-read the original tree */
+	set_executable(index, "A");
+	set_executable(index, "C");
+
+	cl_git_pass(git_index_read_tree(index, tree));
+
+	/* B should have retained its uptodate status, A and C should have
+	 * retained that they are _not_ uptodate. */
 	cl_assert((entry = git_index_get_bypath(index, "A", 0)));
 	cl_assert_equal_i(0, (entry->flags_extended & GIT_IDXENTRY_UPTODATE));
 
 	cl_assert((entry = git_index_get_bypath(index, "B", 0)));
-	cl_assert_equal_i(0, (entry->flags_extended & GIT_IDXENTRY_UPTODATE));
+	cl_assert_equal_i(GIT_IDXENTRY_UPTODATE,
+		(entry->flags_extended & GIT_IDXENTRY_UPTODATE));
 
 	cl_assert((entry = git_index_get_bypath(index, "C", 0)));
 	cl_assert_equal_i(0, (entry->flags_extended & GIT_IDXENTRY_UPTODATE));
