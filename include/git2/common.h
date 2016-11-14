@@ -283,6 +283,8 @@ typedef enum {
  */
 GIT_EXTERN(int) git_libgit2_opts(int option, ...);
 
+GIT_EXTERN(void) git_timeout_set(double ms);
+
 /** @} */
 GIT_END_DECL
 
