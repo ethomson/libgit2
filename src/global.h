@@ -16,6 +16,13 @@ typedef struct {
 	git_error error_t;
 	git_buf error_buf;
 	char oid_fmt[GIT_OID_HEXSZ+1];
+
+	/* On Windows, this is the current child thread that was returned by
+	 * `git_thread_create`.  This will hold the thread's exit code, which
+	 * is a `void *`, but Win32 only supports `DWORD`, so this indirection
+	 * is necessary.  It is unused on other systems.
+	 */
+	git_thread *current_thread;
 } git_global_st;
 
 #ifdef GIT_OPENSSL
