@@ -37,17 +37,17 @@ struct th_data {
 
 #define th_git_pass(threaderr, expr) th_git_pass_(threaderr, (expr), __FILE__, __LINE__)
 
-#define th_git_pass_(__threaderr__, __expr__, __file__, __line__) do { \
+#define th_git_pass_(__threaderr, __expr, __file, __line) do { \
 	giterr_clear(); \
-	if ((((cl_git_threaderr *)__threaderr__)->error = (__expr__)) != 0) { \
+	if ((((cl_git_threaderr *)__threaderr)->error = (__expr)) != 0) { \
 		const git_error *_last = giterr_last(); \
-		((cl_git_threaderr *)__threaderr__)->file = __file__; \
-		((cl_git_threaderr *)__threaderr__)->line = __line__; \
-		((cl_git_threaderr *)__threaderr__)->expr = "Function call failed: " #__expr__; \
-		p_snprintf(((cl_git_threaderr *)__threaderr__)->error_msg, 4096, "thread 0x%" PRIxZ " - error %d - %s", \
-			git_thread_currentid(), ((cl_git_threaderr *)__threaderr__)->error, \
+		((cl_git_threaderr *)__threaderr)->file = __file; \
+		((cl_git_threaderr *)__threaderr)->line = __line; \
+		((cl_git_threaderr *)__threaderr)->expr = "Function call failed: " #__expr; \
+		p_snprintf(((cl_git_threaderr *)__threaderr)->error_msg, 4096, "thread 0x%" PRIxZ " - error %d - %s", \
+			git_thread_currentid(), ((cl_git_threaderr *)__threaderr)->error, \
 			_last ? _last->message : "<no message>"); \
-		git_thread_exit(__threaderr__); \
+		git_thread_exit(__threaderr); \
 	} \
 	} while (0)
 
