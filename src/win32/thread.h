@@ -41,6 +41,7 @@ int git_thread_create(git_thread *GIT_RESTRICT,
 	void *(*) (void *),
 	void *GIT_RESTRICT);
 int git_thread_join(git_thread *, void **);
+size_t git_thread_currentid(void);
 
 int git_mutex_init(git_mutex *GIT_RESTRICT mutex);
 int git_mutex_free(git_mutex *);

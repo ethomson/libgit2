@@ -25,9 +25,36 @@ struct th_data {
 	int id;
 	const char *path;
 	int error;
+	const char *file;
+	int line;
+	const char *expr;
+	char error_msg[4096];
 };
 
-#define th_git_pass(err) do { if (err) return arg; } while (0)
+#define th_git_pass(expr) th_git_pass_((expr), __FILE__, __LINE__)
+
+#define th_git_pass_(__expr__, __file__, __line__) do { \
+	int _lg2_error; \
+	giterr_clear(); \
+	if ((_lg2_error = (__expr__)) != 0) { \
+		const git_error *_last = giterr_last(); \
+		data->error = _lg2_error; \
+		data->file = __file__; \
+		data->line = __line__; \
+		data->expr = "Function call failed: " #__expr__; \
+		p_snprintf(data->error_msg, 4096, "thread 0x%" PRIxZ " - error %d - %s", \
+			git_thread_currentid(), _lg2_error, _last ? _last->message : "<no message>"); \
+		printf("ERROR: %d\nFILE: %s\nLINE: %d\nEXPR: %s\nMSG: %s\n", data->error, data->file, data->line, data->expr, data->error_msg); \
+		return arg; \
+	} \
+	} while (0)
+
+static void th_git_check(struct th_data *data)
+{
+	if (data->error != 0) {
+		clar__assert(0, data->file, data->line, data->expr, data->error_msg, 1);
+	}
+}
 
 static void *iterate_refs(void *arg)
 {
@@ -37,7 +64,7 @@ static void *iterate_refs(void *arg)
 	int count = 0;
 	git_repository *repo;
 
-	cl_git_pass(git_repository_open(&repo, data->path));
+	th_git_pass(git_repository_open(&repo, data->path));
 	do {
 		data->error = git_reference_iterator_new(&i, repo);
 	} while (data->error == GIT_ELOCKED);
@@ -67,7 +94,7 @@ static void *create_refs(void *arg)
 	git_reference *ref[NREFS];
 	git_repository *repo;
 
-	cl_git_pass(git_repository_open(&repo, data->path));
+	th_git_pass(git_repository_open(&repo, data->path));
 
 	do {
 		data->error = git_reference_name_to_id(&head, repo, "HEAD");
@@ -83,7 +110,7 @@ static void *create_refs(void *arg)
 
 		if (i == NREFS/2) {
 			git_refdb *refdb;
-			cl_git_pass(git_repository_refdb(&refdb, repo));
+			th_git_pass(git_repository_refdb(&refdb, repo));
 			do {
 				data->error = git_refdb_compress(refdb);
 			} while (data->error == GIT_ELOCKED);
@@ -109,7 +136,7 @@ static void *delete_refs(void *arg)
 	char name[128];
 	git_repository *repo;
 
-	cl_git_pass(git_repository_open(&repo, data->path));
+	th_git_pass(git_repository_open(&repo, data->path));
 
 	for (i = 0; i < NREFS; ++i) {
 		p_snprintf(
@@ -129,7 +156,7 @@ static void *delete_refs(void *arg)
 
 		if (i == NREFS/2) {
 			git_refdb *refdb;
-			cl_git_pass(git_repository_refdb(&refdb, repo));
+			th_git_pass(git_repository_refdb(&refdb, repo));
 			do {
 				data->error = git_refdb_compress(refdb);
 			} while (data->error == GIT_ELOCKED);
@@ -143,7 +170,7 @@ static void *delete_refs(void *arg)
 	return arg;
 }
 
-void test_threads_refdb__edit_while_iterate(void)
+void do_shit(void)
 {
 	int r, t;
 	struct th_data th_data[THREADS];
@@ -198,6 +225,7 @@ void test_threads_refdb__edit_while_iterate(void)
 #ifdef GIT_THREADS
 	for (t = 0; t < THREADS; ++t) {
 		cl_git_pass(git_thread_join(&th[t], NULL));
+		th_git_check(&th_data[t]);
 	}
 
 	memset(th, 0, sizeof(th));
@@ -209,6 +237,16 @@ void test_threads_refdb__edit_while_iterate(void)
 
 	for (t = 0; t < THREADS; ++t) {
 		cl_git_pass(git_thread_join(&th[t], NULL));
+		th_git_check(&th_data[t]);
 	}
 #endif
+}
+
+void test_threads_refdb__edit_while_iterate(void)
+{
+	while (1) {
+		printf("trying...\n");
+		do_shit();
+		cl_git_sandbox_cleanup();
+	}
 }

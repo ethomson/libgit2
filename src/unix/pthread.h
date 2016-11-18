@@ -17,6 +17,7 @@ typedef struct {
 	pthread_create(&(git_thread_ptr)->thread, NULL, start_routine, arg)
 #define git_thread_join(git_thread_ptr, status) \
 	pthread_join((git_thread_ptr)->thread, status)
+#define git_thread_currentid() ((size_t)(pthread_self()))
 
 /* Git Mutex */
 #define git_mutex pthread_mutex_t

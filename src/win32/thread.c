@@ -95,6 +95,11 @@ int git_thread_join(
 	return 0;
 }
 
+size_t git_thread_currentid(void)
+{
+	return GetCurrentThreadId();
+}
+
 int git_mutex_init(git_mutex *GIT_RESTRICT mutex)
 {
 	InitializeCriticalSection(mutex);
