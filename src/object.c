@@ -250,7 +250,7 @@ git_otype git_object_stringn2type(const char *str, size_t len)
 		return GIT_OBJ_BAD;
 
 	for (i = 0; i < ARRAY_SIZE(git_objects_table); i++)
-		if (git_object_typeisloose(i) &&
+		if (*git_objects_table[i].str &&
 			!git__prefixncmp(str, len, git_objects_table[i].str))
 			return (git_otype)i;
 
