@@ -65,3 +65,21 @@ void test_odb_largefiles__write_then_read(void)
 
 	git_odb_object_free(obj);
 }
+
+void test_odb_largefiles__read_rejected_on_32bit(void)
+{
+	git_oid oid;
+	git_odb_object *obj = NULL;
+
+#ifdef GIT_ARCH_64
+	cl_skip();
+#endif
+
+	if (!cl_is_env_set("GITTEST_INVASIVE_FS_SIZE"))
+		cl_skip();
+
+	writefile(&oid);
+	cl_git_fail(git_odb_read(&obj, odb, &oid));
+
+	git_odb_object_free(obj);
+}

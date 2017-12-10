@@ -121,8 +121,9 @@ static size_t get_binary_object_header(obj_hdr *hdr, git_buf *obj)
 }
 
 static int parse_header(
-	obj_hdr *out, size_t *out_len, unsigned char *data, size_t data_len)
+	obj_hdr *out, size_t *out_len, unsigned char *_data, size_t data_len)
 {
+	const char *data = (char *)_data;
 	size_t i, typename_len, size_idx, size_len;
 	int64_t size;
 
@@ -151,6 +152,11 @@ static int parse_header(
 	if (git__strntol64(&size, &data[size_idx], size_len, NULL, 10) < 0 ||
 		size < 0)
 		goto on_error;
+
+	if ((uint64_t)size > SIZE_MAX) {
+		giterr_set(GITERR_OBJECT, "object is larger than available memory");
+		return -1;
+	}
 
 	out->size = size;
 
