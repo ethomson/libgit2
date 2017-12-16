@@ -48,7 +48,7 @@ void test_odb_largefiles__streamwrite(void)
 	cl_assert_equal_oid(&expected, &oid);
 }
 
-void test_odb_largefiles__write_then_read(void)
+void test_odb_largefiles__read_into_memory(void)
 {
 	git_oid oid;
 	git_odb_object *obj;
@@ -60,13 +60,16 @@ void test_odb_largefiles__write_then_read(void)
 	if (!cl_is_env_set("GITTEST_INVASIVE_FS_SIZE"))
 		cl_skip();
 
+	if (!cl_is_env_set("GITTEST_INVASIVE_MEMORY"))
+		cl_skip();
+
 	writefile(&oid);
 	cl_git_pass(git_odb_read(&obj, odb, &oid));
 
 	git_odb_object_free(obj);
 }
 
-void test_odb_largefiles__read_rejected_on_32bit(void)
+void test_odb_largefiles__read_into_memory_rejected_on_32bit(void)
 {
 	git_oid oid;
 	git_odb_object *obj = NULL;
@@ -76,6 +79,9 @@ void test_odb_largefiles__read_rejected_on_32bit(void)
 #endif
 
 	if (!cl_is_env_set("GITTEST_INVASIVE_FS_SIZE"))
+		cl_skip();
+
+	if (!cl_is_env_set("GITTEST_INVASIVE_MEMORY"))
 		cl_skip();
 
 	writefile(&oid);
