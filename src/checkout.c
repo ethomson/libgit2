@@ -70,6 +70,7 @@ typedef struct {
 	git_buf tmp;
 	unsigned int strategy;
 	int can_symlink;
+	int respect_filemode;
 	bool reload_submodules;
 	size_t total_steps;
 	size_t completed_steps;
@@ -159,17 +160,13 @@ GIT_INLINE(bool) is_workdir_base_or_new(
 		git_oid__cmp(&newitem->id, workdir_id) == 0);
 }
 
-GIT_INLINE(bool) is_file_mode_changed(git_filemode_t a, git_filemode_t b)
+GIT_INLINE(bool) is_filemode_changed(git_filemode_t a, git_filemode_t b, int respect_filemode)
 {
-#ifdef GIT_WIN32
-	/*
-	 * On Win32 we do not support the executable bit; the file will
-	 * always be 0100644 on disk, don't bother doing a test.
-	 */
-	return false;
-#else
-	return (S_ISREG(a) && S_ISREG(b) && a != b);
-#endif
+	/* If core.filemode = false, ignore executable bit changes */
+	if (!respect_filemode)
+		return (a & ~0111) != (b & ~0111);
+
+	return (a != b);
 }
 
 static bool checkout_is_workdir_modified(
@@ -217,11 +214,11 @@ static bool checkout_is_workdir_modified(
 	if (ie != NULL &&
 		git_index_time_eq(&wditem->mtime, &ie->mtime) &&
 		wditem->file_size == ie->file_size &&
-		!is_file_mode_changed(wditem->mode, ie->mode)) {
+		!is_filemode_changed(wditem->mode, ie->mode, data->respect_filemode)) {
 
 		/* The workdir is modified iff the index entry is modified */
 		return !is_workdir_base_or_new(&ie->id, baseitem, newitem) ||
-			is_file_mode_changed(baseitem->mode, ie->mode);
+			is_filemode_changed(baseitem->mode, ie->mode, data->respect_filemode);
 	}
 
 	/* depending on where base is coming from, we may or may not know
@@ -234,7 +231,7 @@ static bool checkout_is_workdir_modified(
 	if (S_ISDIR(wditem->mode))
 		return false;
 
-	if (is_file_mode_changed(baseitem->mode, wditem->mode))
+	if (is_filemode_changed(baseitem->mode, wditem->mode, data->respect_filemode))
 		return true;
 
 	if (git_diff__oid_for_entry(&oid, data->diff, wditem, wditem->mode, NULL) < 0)
@@ -2452,6 +2449,10 @@ static int checkout_data_init(
 
 	if ((error = git_repository__cvar(
 			 &data->can_symlink, repo, GIT_CVAR_SYMLINKS)) < 0)
+		goto cleanup;
+
+	if ((error = git_repository__cvar(
+			 &data->respect_filemode, repo, GIT_CVAR_FILEMODE)) < 0)
 		goto cleanup;
 
 	if (!data->opts.baseline && !data->opts.baseline_index) {
