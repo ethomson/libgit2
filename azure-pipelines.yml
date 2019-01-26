@@ -14,7 +14,6 @@ jobs:
   - script: |
       git config user.name 'Documentation Generation'
       git config user.email 'libgit2@libgit2.org'
-      git fetch --tags
     displayName: 'Configure Git'
   - task: docker@0
     displayName: 'Generate Documentation'
@@ -23,12 +22,17 @@ jobs:
       imageName: libgit2/docurium:test
       volumes: |
        $(Build.SourcesDirectory):/src
-       $(Build.BinariesDirectory):/build
-      envVars: |
-       Build.SourcesDirectory=/src
-       Build.BinariesDirectory=/build
       workDir: '/src'
       containerCommand: 'cm doc api.docurium'
       detached: false
-  - script: git checkout gh-pages
-  - script: ls -FlasR
+  - task: archivefiles@2
+    displayName: 'Archive Documentation'
+    inputs:
+      rootFolderOrFile: '$(Build.SourcesDirectory)'
+      includeRootFolder: false
+      archiveFile: '$(Build.ArtifactStagingDirectory)/api-documentation.zip'
+  - task: publishbuildartifacts@1
+    displayName: 'Upload Documentation'
+    inputs:
+      pathToPublish: '$(Build.ArtifactStagingDirectory)'
+      artifactName: 'docs'
