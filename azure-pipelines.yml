@@ -25,6 +25,8 @@ jobs:
       workDir: '/src'
       containerCommand: 'cm doc api.docurium'
       detached: false
+  - script: git checkout gh-pages
+    displayName: 'Switch to Documentation Branch'
   - task: archivefiles@2
     displayName: 'Archive Documentation'
     inputs:
