@@ -22,6 +22,6 @@ jobs:
       envVars: |
        Build.SourcesDirectory=/src
        Build.BinariesDirectory=/build
-      workDir: '/build'
+      workDir: '/src'
       containerCommand: 'cm doc api.docurium'
       detached: false
