@@ -14,19 +14,8 @@ jobs:
   - script: |
       git config user.name 'Documentation Generation'
       git config user.email 'libgit2@libgit2.org'
-    displayName: 'Configure Git'
-  - task: docker@0
-    displayName: 'Generate Documentation'
-    inputs:
-      action: 'Run an image'
-      imageName: libgit2/docurium:test
-      volumes: |
-       $(Build.SourcesDirectory):/src
-      workDir: '/src'
-      containerCommand: 'cm doc api.docurium'
-      detached: false
-  - script: git checkout gh-pages
-    displayName: 'Switch to Documentation Branch'
+      docker run --rm -v /home/vsts/work/1/s:/src -w /src libgit2/docurium:test cm doc api.docurium
+      git checkout gh-pages
   - task: archivefiles@2
     displayName: 'Archive Documentation'
     inputs:
