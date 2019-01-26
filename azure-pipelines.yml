@@ -16,7 +16,7 @@ jobs:
       git config user.email 'libgit2@libgit2.org'
       docker run --rm -v /home/vsts/work/1/s:/src -w /src libgit2/docurium:test cm doc api.docurium
       git checkout gh-pages
-	  cp -R * '$(Build.BinariesDirectory)'
+      cp -R * '$(Build.BinariesDirectory)'
   - task: archivefiles@2
     displayName: 'Archive Documentation'
     inputs:
