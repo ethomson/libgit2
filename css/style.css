@@ -71,6 +71,11 @@ div.sidebar-shell {
 div.sidebar-module {
   width: 232px;
 }
+
+.hidden {
+    display: none;
+}
+
 .content {
   width: 660px;
 }
@@ -208,6 +213,17 @@ h1.funcTitle small {
   margin-top: 0;
 }
 
+.signatures ul {
+    list-style: none outside none;
+    float: left;
+}
+
+.signatures ul li {
+    list-style: none;
+    float: left;
+    display: block;
+}
+
 h2.funcGroup {
   border: 0;
   margin: 5px 0;
@@ -237,4 +253,8 @@ p.functionList a.introd {
 }
 .changelog li.deletes {
   color: #933;
+}
+
+.type-comment {
+  padding-left: 3em;
 }

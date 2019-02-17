@@ -265,7 +265,6 @@ div.sidebar-module > ul h3:hover a {
 
 div.sidebar-module ul ul,
 div.sidebar-module .spacer {
-  display: block;
   padding-bottom: 2px;
   background-color: #FAFAFB;
 }
@@ -460,6 +459,7 @@ div.sidebar-module ul ul li span {
 .content .verseblock-content,
 .content .sectionbody .dlist dt,
 .content p > tt,
+.content table tr td code,
 .content dl code,
 .content ul code,
 p code {
