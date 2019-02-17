@@ -30,6 +30,7 @@ jobs:
       pathToPublish: '$(Build.ArtifactStagingDirectory)'
       artifactName: 'docs'
   - script: |
+      git remote -v
       git config credential.https://github.com.username $(GITHUB_USERNAME)
       git config credential.https://github.com.password $(GITHUB_PAT)
       git push origin gh-pages
