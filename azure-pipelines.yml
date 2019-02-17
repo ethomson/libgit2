@@ -15,10 +15,8 @@ jobs:
       git config user.name 'Documentation Generation'
       git config user.email 'libgit2@users.noreply.github.com'
       git branch gh-pages origin/gh-pages
-      git log -1 gh-pages
       docker run --rm -v /home/vsts/work/1/s:/src -w /src libgit2/docurium:test cm doc api.docurium
       git checkout gh-pages
-      git log -2
       cp -R * '$(Build.BinariesDirectory)'
     displayName: 'Generate Documentation'
   - task: archivefiles@2
@@ -37,7 +35,6 @@ jobs:
       echo 'machine github.com' > ~/.netrc
       echo 'login $(GITHUB_USERNAME)' >> ~/.netrc
       echo 'password $(GITHUB_PAT)' >> ~/.netrc
-      git log -2 gh-pages
       git push origin gh-pages
     displayName: 'Publish Documentation'
     condition: eq(variables['Build.Reason'], 'IndividualCI')
