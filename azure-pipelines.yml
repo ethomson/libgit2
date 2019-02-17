@@ -31,8 +31,10 @@ jobs:
       artifactName: 'docs'
   - script: |
       git remote -v
-      git config credential.https://github.com.username $(GITHUB_USERNAME)
-      git config credential.https://$(GITHUB_USERNAME)@github.com.password $(GITHUB_PAT)
+      echo 'machine github.com' > ~/.netrc
+      echo 'login $(GITHUB_USERNAME)' >> ~/.netrc
+      echo 'password $(GITHUB_PAT)' >> ~/.netrc
+	  cat ~/.netrc
       git push origin gh-pages
     displayName: 'Publish Documentation'
     condition: eq(variables['Build.Reason'], 'IndividualCI')
