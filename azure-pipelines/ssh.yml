@@ -1,0 +1,66 @@
+# These are the steps used for ssh'ing into a remote host to build and test.
+steps:
+- task: DownloadSecureFile@1
+  displayName: 'Download Private Key'
+  inputs:
+    secureFile: 'ee313488-8b03-4978-85f2-c35bfcc2f784'
+
+- task: DownloadSecureFile@1
+  displayName: 'Download Public Key'
+  inputs:
+    secureFile: 'ec587979-110a-4fe7-98d2-7d5705f2a418'
+
+- script: chmod 0600 "$(DownloadSecureFile1.SecureFilePath)"
+  displayName: Configure SSH Keys
+
+- bash: |
+    ssh -i "$(DownloadSecureFile1.SecureFilePath)" -o StrictHostKeyChecking=no "${{ parameters.remoteHost }}" <<EOF
+      set -e
+      uname -a
+      REMOTE_BASEDIR="\$(mktemp -d -t libgit2_build)"
+      REMOTE_SOURCEDIR="\${REMOTE_BASEDIR}/src"
+      REMOTE_OUTPUTDIR="\${REMOTE_BASEDIR}/build"
+      echo "Source directory: \${REMOTE_SOURCEDIR}"
+      echo "Output directory: \${REMOTE_OUTPUTDIR}"
+      mkdir "\${REMOTE_SOURCEDIR}"
+      mkdir "\${REMOTE_OUTPUTDIR}"
+      echo "##vso[task.setvariable variable=Remote.BaseDir]\${REMOTE_BASEDIR}"
+      echo "##vso[task.setvariable variable=Remote.SourceDir]\${REMOTE_SOURCEDIR}"
+      echo "##vso[task.setvariable variable=Remote.OutputDir]\${REMOTE_OUTPUTDIR}"
+    EOF
+  env: ${{ parameters.environmentVariables }}
+  displayName: Configure Build Target
+
+- bash: |
+    scp -i "$(DownloadSecureFile1.SecureFilePath)" -o StrictHostKeyChecking=no -r "$(Build.SourcesDirectory)"/* "${{ parameters.remoteHost }}":"$(Remote.SourceDir)"
+  env: ${{ parameters.environmentVariables }}
+  displayName: Copy Sources
+
+- bash: |
+    ssh -i "$(DownloadSecureFile1.SecureFilePath)" -o StrictHostKeyChecking=no "${{ parameters.remoteHost }}" <<EOF
+      set -e
+      export CC="${CC}"
+      export CMAKE_OPTIONS="${CMAKE_OPTIONS}"
+      cd $(Remote.OutputDir)
+      $(Remote.SourceDir)/ci/build.sh
+    EOF
+  env: ${{ parameters.environmentVariables }}
+  displayName: Build
+
+- bash: |
+    ssh -i "$(DownloadSecureFile1.SecureFilePath)" -o StrictHostKeyChecking=no "${{ parameters.remoteHost }}" <<EOF
+      set -e
+      export LEAK_CHECK="${LEAK_CHECK}"
+      export SKIP_OFFLINE_TESTS="${SKIP_OFFLINE_TESTS}"
+      export SKIP_ONLINE_TESTS="${SKIP_ONLINE_TESTS}"
+      export SKIP_GITDAEMON_TESTS="${SKIP_GITDAEMON_TESTS}"
+      export SKIP_SSH_TESTS="${SKIP_SSH_TESTS}"
+      export SKIP_PROXY_TESTS="${SKIP_PROXY_TESTS}"
+      export SKIP_FUZZERS="${SKIP_FUZZERS}"
+      export RUN_INVASIVE_TESTS="${RUN_INVASIVE_TESTS}"
+      cd $(Remote.OutputDir)
+      $(Remote.SourceDir)/ci/test.sh
+    EOF
+  env: ${{ parameters.environmentVariables }}
+  displayName: Test
+
