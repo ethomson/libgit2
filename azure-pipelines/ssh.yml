@@ -13,6 +13,8 @@ steps:
 - script: chmod 0600 "$(DownloadSecureFile1.SecureFilePath)"
   displayName: Configure SSH Keys
 
+- script: df -k
+
 - bash: |
     ssh -i "$(DownloadSecureFile1.SecureFilePath)" -o StrictHostKeyChecking=no "${{ parameters.remoteHost }}" <<EOF
       set -e
