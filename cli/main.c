@@ -26,10 +26,8 @@ int main(int argc, char **argv)
 		{ 0 }
 	};
 
-	if (git_libgit2_init() < 0) {
-		fprintf(stderr, "error: failed to initialize libgit2\n");
-		exit(1);
-	}
+	if (git_libgit2_init() < 0)
+		gitcli_die("error: failed to initialize libgit2");
 
 	gitcli_opt_parser_init(&optparser, global_opt_specs, argv + 1, argc - 1);
 

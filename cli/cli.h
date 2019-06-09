@@ -10,6 +10,7 @@
 
 #include "common.h"
 
+#include "printerr.h"
 #include "console.h"
 #include "opt.h"
 #include "opt_usage.h"
