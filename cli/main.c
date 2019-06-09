@@ -37,6 +37,7 @@ int main(int argc, char **argv)
 	while (gitcli_opt_parser_next(&opt, &optparser)) {
 		if (!opt.spec) {
 			gitcli_opt_status_fprint(stderr, &opt);
+			gitcli_opt_usage_fprint(stderr, GIT_CLI_NAME, global_opt_specs);
 			return 129;
 		}
 

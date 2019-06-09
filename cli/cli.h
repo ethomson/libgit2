@@ -10,7 +10,9 @@
 
 #include "common.h"
 
+#include "console.h"
 #include "opt.h"
+#include "opt_usage.h"
 
 #define GIT_CLI_NAME "git2"
 
