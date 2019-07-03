@@ -4,7 +4,7 @@ steps:
   - script: docker run --rm --privileged multiarch/qemu-user-static:register --reset
     displayName: 'Register Docker QEMU'
 
-- script: ls -FlasR /var/lib/docker
+- script: sudo ls -FlasR /var/lib/docker
 - task: docker@0
   displayName: Build
   inputs:
