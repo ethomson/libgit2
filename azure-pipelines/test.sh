@@ -207,6 +207,24 @@ if [ -z "$SKIP_PROXY_TESTS" ]; then
 	unset GITTEST_REMOTE_PROXY_PASS
 fi
 
+if [ -z "$SKIP_NEGOTIATE_TESTS" -a -n "$GITTEST_NEGOTIATE_PASSWORD" ]; then
+	echo ""
+	echo "Running SPNEGO tests"
+	echo ""
+
+	if [ "$(uname -s)" = "Darwin" ]; then
+		KINIT_FLAGS="--password-file=STDIN"
+	fi
+
+	echo $GITTEST_NEGOTIATE_PASSWORD | kinit $KINIT_FLAGS test@LIBGIT2.ORG
+
+	export GITTEST_REMOTE_URL="https://test.libgit2.org/kerberos/empty.git"
+	export GITTEST_REMOTE_DEFAULT="true"
+	run_test authenticate
+	unset GITTEST_REMOTE_URL
+	unset GITTEST_REMOTE_DEFAULT
+fi
+
 if [ -z "$SKIP_SSH_TESTS" ]; then
 	echo ""
 	echo "Running ssh tests"
