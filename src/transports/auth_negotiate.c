@@ -133,6 +133,11 @@ static int negotiate_next_token(
 		error = -1;
 		goto done;
 	} else if (challenge_len > 9) {
+		if (memcmp(ctx->challenge, "Negotiate", 9) != 0) {
+			git_error_set(GIT_ERROR_NET, "server did not request Negotiate");
+			goto done;
+		}
+
 		if (git_buf_decode_base64(&input_buf,
 				ctx->challenge + 10, challenge_len - 10) < 0) {
 			git_error_set(GIT_ERROR_NET, "invalid negotiate challenge from server");
@@ -144,6 +149,11 @@ static int negotiate_next_token(
 		input_token.length = input_buf.size;
 		input_token_ptr = &input_token;
 	} else if (ctx->gss_context != GSS_C_NO_CONTEXT) {
+		if (memcmp(ctx->challenge, "Negotiate", 9) != 0) {
+			git_error_set(GIT_ERROR_NET, "server did not request Negotiate");
+			goto done;
+		}
+
 		negotiate_context_dispose(ctx);
 	}
 
