@@ -1298,6 +1298,27 @@ done:
 	return error;
 }
 
+static int http_stream_write_request(http_stream *s, size_t len)
+{
+	http_subtransport *t = OWNING_SUBTRANSPORT(s);
+	git_buf request = GIT_BUF_INIT;
+	int error;
+
+	clear_parser_state(t);
+
+	if ((error = gen_request(&request, s, len)) < 0)
+		return error;
+
+	error = git_stream__write_full(t->server.stream,
+	                               request.ptr, request.size, 0);
+	git_buf_dispose(&request);
+
+	if (!error)
+		s->sent_request = 1;
+
+	return error;
+}
+
 static int http_stream_write_chunked(
 	git_smart_subtransport_stream *stream,
 	const char *buffer,
@@ -1310,22 +1331,8 @@ static int http_stream_write_chunked(
 
 	/* Send the request, if necessary */
 	if (!s->sent_request) {
-		git_buf request = GIT_BUF_INIT;
-
-		clear_parser_state(t);
-
-		if (gen_request(&request, s, 0) < 0)
+		if (http_stream_write_request(s, 0) < 0)
 			return -1;
-
-		if (git_stream__write_full(t->server.stream, request.ptr,
-					   request.size, 0) < 0) {
-			git_buf_dispose(&request);
-			return -1;
-		}
-
-		git_buf_dispose(&request);
-
-		s->sent_request = 1;
 	}
 
 	if (len > CHUNK_SIZE) {
@@ -1381,7 +1388,6 @@ static int http_stream_write_single(
 {
 	http_stream *s = GIT_CONTAINER_OF(stream, http_stream, parent);
 	http_subtransport *t = OWNING_SUBTRANSPORT(s);
-	git_buf request = GIT_BUF_INIT;
 
 	assert(t->connected);
 
@@ -1390,25 +1396,13 @@ static int http_stream_write_single(
 		return -1;
 	}
 
-	clear_parser_state(t);
-
-	if (gen_request(&request, s, len) < 0)
+	if (http_stream_write_request(s, len) < 0)
 		return -1;
 
-	if (git_stream__write_full(t->server.stream, request.ptr, request.size, 0) < 0)
-		goto on_error;
-
 	if (len && git_stream__write_full(t->server.stream, buffer, len, 0) < 0)
-		goto on_error;
-
-	git_buf_dispose(&request);
-	s->sent_request = 1;
+		return -1;
 
 	return 0;
-
-on_error:
-	git_buf_dispose(&request);
-	return -1;
 }
 
 static void http_stream_free(git_smart_subtransport_stream *stream)
