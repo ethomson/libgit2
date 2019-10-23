@@ -1209,22 +1209,16 @@ replay:
 	}
 
 	while (!*bytes_read && !t->parse_finished) {
-		size_t data_offset;
+		size_t data_offset = t->parse_buffer.offset,
+		       orig_buffer_len = t->parse_buffer.len;
 
 		/*
-		 * Make the parse_buffer think it's as full of data as
-		 * the buffer, so it won't try to recv more data than
-		 * we can put into it.
-		 *
-		 * data_offset is the actual data offset from which we
-		 * should tell the parser to start reading.
+		 * If there's limited space in the output buffer, shrink
+		 * the parse buffer to avoid reading more from the socket
+		 * than we can fit in the output buffer.
 		 */
-		if (buf_size >= t->parse_buffer.len)
-			t->parse_buffer.offset = 0;
-		else
-			t->parse_buffer.offset = t->parse_buffer.len - buf_size;
-
-		data_offset = t->parse_buffer.offset;
+		if (buf_size < t->parse_buffer.len)
+			t->parse_buffer.len = buf_size;
 
 		if ((error = gitno_recv(&t->parse_buffer)) < 0) {
 			goto done;
@@ -1237,6 +1231,8 @@ replay:
 			error = -1;
 			goto done;
 		}
+
+		t->parse_buffer.len = orig_buffer_len;
 
 		/*
 		 * This call to http_parser_execute will result in invocations
