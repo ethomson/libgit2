@@ -117,6 +117,7 @@ typedef struct {
 	unsigned request_count;
 	unsigned parse_finished : 1,
 	    keepalive : 1,
+	    carryover : 1,
 	    replay_count : 4;
 } http_subtransport;
 
@@ -179,7 +180,8 @@ done:
 static int gen_request(
 	git_buf *buf,
 	http_stream *s,
-	size_t content_length)
+	size_t content_length,
+	bool expect_continue)
 {
 	http_subtransport *t = OWNING_SUBTRANSPORT(s);
 	const char *path = t->server.url.path ? t->server.url.path : "/";
@@ -216,6 +218,9 @@ static int gen_request(
 			git_buf_printf(buf, "Content-Length: %"PRIuZ "\r\n", content_length);
 	} else
 		git_buf_puts(buf, "Accept: */*\r\n");
+
+	if (expect_continue)
+		git_buf_printf(buf, "Expect: 100-continue\r\n");
 
 	for (i = 0; i < t->owner->custom_headers.count; i++) {
 		if (t->owner->custom_headers.strings[i])
@@ -1180,7 +1185,7 @@ replay:
 		git_buf_clear(&request);
 		clear_parser_state(t);
 
-		if ((error = gen_request(&request, s, 0)) < 0 ||
+		if ((error = gen_request(&request, s, 0, false)) < 0 ||
 		    (error = git_stream__write_full(t->server.stream, request.ptr, request.size, 0)) < 0)
 			goto done;
 
@@ -1209,18 +1214,25 @@ replay:
 	}
 
 	while (!*bytes_read && !t->parse_finished) {
-		size_t data_offset = t->parse_buffer.offset,
-		       orig_buffer_len = t->parse_buffer.len;
+		/*
+		 * If we have carryover data from an expect/continue call,
+		 * use it, don't read from the socket.  (Otherwise, start
+		 * reading at the end of the parse buffer.)
+		 */
+		size_t data_offset = t->carryover ? 0 : t->parse_buffer.offset;
+		size_t orig_buffer_len = t->parse_buffer.len;
 
 		/*
-		 * If there's limited space in the output buffer, shrink
-		 * the parse buffer to avoid reading more from the socket
-		 * than we can fit in the output buffer.
+		 * If our output buffer is not as big as the parse buffer,
+		 * shrink the parse buffer to ensure that we don't read more
+		 * than would fit in the output buffer.
 		 */
 		if (buf_size < t->parse_buffer.len)
 			t->parse_buffer.len = buf_size;
 
-		if ((error = gitno_recv(&t->parse_buffer)) < 0) {
+		if (t->carryover) {
+			t->carryover = 0;
+		} else if ((error = gitno_recv(&t->parse_buffer)) < 0) {
 			goto done;
 		} else if (error == 0 && t->request_count > 0) {
 			/* Server closed a keep-alive socket; reconnect. */
@@ -1294,7 +1306,202 @@ done:
 	return error;
 }
 
-static int http_stream_write_request(http_stream *s, size_t len)
+static int continue_headers_complete(http_parser *parser)
+{
+	parser_context *ctx = (parser_context *) parser->data;
+	http_subtransport *t = ctx->t;
+
+	/* Both parse_header_name and parse_header_value are populated
+	 * and ready for consumption. */
+	if (t->last_cb == VALUE && on_header_ready(t) < 0)
+		return t->parse_error = PARSE_ERROR_GENERIC;
+
+	/* Check for a proxy authentication failure. */
+	if (parser->status_code == 407)
+		return on_auth_required(
+								parser,
+								&t->proxy,
+								t->proxy_opts.url,
+								SERVER_TYPE_PROXY,
+								t->proxy_opts.credentials,
+								t->proxy_opts.payload);
+	else
+		on_auth_success(&t->proxy);
+
+	/* Check for an authentication failure. */
+	if (parser->status_code == 401)
+		return on_auth_required(
+								parser,
+								&t->server,
+								t->owner->url,
+								SERVER_TYPE_REMOTE,
+								t->owner->cred_acquire_cb,
+								t->owner->cred_acquire_payload);
+	else
+		on_auth_success(&t->server);
+
+	/* Check for a 100 (continue) HTTP status code. */
+	if (parser->status_code != 100) {
+		git_error_set(GIT_ERROR_NET,
+		              "unexpected HTTP status code: %d",
+		              parser->status_code);
+		return t->parse_error = PARSE_ERROR_GENERIC;
+	}
+
+	t->parse_finished = 1;
+	return 0;
+}
+
+static int continue_message_complete(http_parser *parser)
+{
+	parser_context *ctx = (parser_context *) parser->data;
+	http_subtransport *t = ctx->t;
+
+	t->parse_finished = 1;
+	t->keepalive = http_should_keep_alive(parser);
+
+	/*
+	 * Instruct http_parser to stop parsing.  A server may try to
+	 * pipeline the 200 OK since it's basically just opening a
+	 * connection to git, and any I/O is done through the HTTP
+	 * body.  So as long as authentication succeeds, we may get
+	 * the expected 100 Continue followed immediately by a
+	 * 200 OK.  We want http_parser to stop parsing as soon as
+	 * it's seen the 100 Continue; returning 0 here will allow
+	 * it to continue parsing the buffer that may have the 200.
+	 */
+	return -1;
+}
+
+static int http_stream_write_request_expectcontinue(http_stream *s, size_t len)
+{
+	http_subtransport *t = OWNING_SUBTRANSPORT(s);
+	static http_parser_settings continue_parser_settings = {0};
+	git_buf request = GIT_BUF_INIT;
+	size_t bytes_read = 0, bytes_parsed;
+	parser_context ctx;
+	bool auth_replay;
+	int error;
+
+	/* Use the parser settings only to parser headers. */
+	continue_parser_settings.on_header_field = on_header_field;
+	continue_parser_settings.on_header_value = on_header_value;
+	continue_parser_settings.on_headers_complete = continue_headers_complete;
+	continue_parser_settings.on_message_complete = continue_message_complete;
+
+replay:
+	git_buf_clear(&request);
+	clear_parser_state(t);
+
+	auth_replay = false;
+
+	if ((error = gen_request(&request, s, len, true)) < 0)
+		goto done;
+
+	error = git_stream__write_full(t->server.stream,
+	                               request.ptr, request.size, 0);
+	git_buf_dispose(&request);
+
+	if (error < 0)
+		goto done;
+
+	while (!bytes_read && !t->parse_finished) {
+		t->parse_buffer.offset = 0;
+
+		if ((error = gitno_recv(&t->parse_buffer)) < 0) {
+			goto done;
+		} else if (error == 0 && t->request_count > 0) {
+			/* Server closed a keep-alive socket; reconnect. */
+			auth_replay = true;
+			goto done;
+		} else if (error == 0) {
+			git_error_set(GIT_ERROR_NET, "unexpected disconnection from server");
+			error = -1;
+			goto done;
+		}
+
+		/*
+		 * This call to http_parser_execute will invoke the on_*
+		 * callbacks.  Since we don't care about the body of the response,
+		 * we can set our buffer to NULL.
+		 */
+		ctx.t = t;
+		ctx.s = NULL;
+		ctx.buffer = NULL;
+		ctx.buf_size = 0;
+		ctx.bytes_read = &bytes_read;
+
+		/* Set the context, call the parser, then unset the context. */
+		t->parser.data = &ctx;
+
+		bytes_parsed = http_parser_execute(&t->parser,
+		                                   &continue_parser_settings,
+		                                   t->parse_buffer.data,
+		                                   t->parse_buffer.offset);
+
+		t->parser.data = NULL;
+
+		/* Ensure that we didn't get a redirect; unsupported. */
+		if (t->location) {
+			git_error_set(GIT_ERROR_NET, "server sent unsupported redirect during POST");
+			error = -1;
+			goto done;
+		}
+
+		/* Replay the request with authentication headers. */
+		if (PARSE_ERROR_REPLAY == t->parse_error) {
+			auth_replay = true;
+		} else if (t->parse_error < 0) {
+			error = t->parse_error == PARSE_ERROR_EXT ? PARSE_ERROR_EXT : -1;
+			goto done;
+		}
+
+		if (t->parser.http_errno != HPE_CB_message_complete) {
+			git_error_set(GIT_ERROR_NET,
+			              "HTTP parser error: %s",
+			              http_errno_description((enum http_errno)t->parser.http_errno));
+			error = -1;
+			goto done;
+		}
+
+		t->parser.http_errno = HPE_OK;
+
+		/*
+		 * The server may have given us more than just the 100 Continue
+		 * response.  If so, move that up to the front of the buffer.
+		 * Mark that we'll "carryover" this data, which means that the
+		 * parser shouldn't do a read on the socket, it already has
+		 * data in the buffer that it should use.
+		 */
+		if (t->parse_buffer.offset > bytes_parsed) {
+			size_t new_offset = t->parse_buffer.offset - bytes_parsed;
+
+			memmove(t->parse_buffer.data, t->parse_buffer.data + bytes_parsed, new_offset);
+			t->parse_buffer.offset = new_offset;
+			t->carryover = 1;
+		}
+	}
+
+	t->request_count++;
+
+	if (auth_replay) {
+		s->sent_request = 0;
+
+		if ((error = http_connect(t)) < 0)
+			return error;
+
+		goto replay;
+	}
+
+	s->sent_request = 1;
+	t->parse_finished = 0;
+
+done:
+	git_buf_dispose(&request);
+	return error;
+}
+
+static int http_stream_write_request_standard(http_stream *s, size_t len)
 {
 	http_subtransport *t = OWNING_SUBTRANSPORT(s);
 	git_buf request = GIT_BUF_INIT;
@@ -1302,17 +1509,21 @@ static int http_stream_write_request(http_stream *s, size_t len)
 
 	clear_parser_state(t);
 
-	if ((error = gen_request(&request, s, len)) < 0)
-		return error;
+	if ((error = gen_request(&request, s, len, false)) < 0 ||
+	    (error = git_stream__write_full(t->server.stream,
+	                                    request.ptr, request.size, 0)) < 0)
+		goto done;
 
-	error = git_stream__write_full(t->server.stream,
-	                               request.ptr, request.size, 0);
+	s->sent_request = 1;
+
+done:
 	git_buf_dispose(&request);
-
-	if (!error)
-		s->sent_request = 1;
-
 	return error;
+}
+
+static int http_stream_write_request(http_stream *s, size_t len)
+{
+	return http_stream_write_request_expectcontinue(s, len);
 }
 
 static int http_stream_write_chunked(
