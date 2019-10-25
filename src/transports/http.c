@@ -538,7 +538,7 @@ static int on_auth_required(
 
 	assert(server->cred);
 
-    if (!(server->cred->credtype & server->credtypes)) {
+	if (!(server->cred->credtype & server->credtypes)) {
 		git_error_set(GIT_ERROR_NET, "%s credential provider returned an invalid cred type", type);
 		t->parse_error = PARSE_ERROR_GENERIC;
 		return t->parse_error;
@@ -573,7 +573,7 @@ static int on_headers_complete(http_parser *parser)
 		return t->parse_error = PARSE_ERROR_GENERIC;
 
 	/* Check for a proxy authentication failure. */
-	if (parser->status_code == 407 && get_verb == s->verb)
+	if (parser->status_code == 407)
 		return on_auth_required(
 		    parser,
 		    &t->proxy,
@@ -585,7 +585,7 @@ static int on_headers_complete(http_parser *parser)
 		on_auth_success(&t->proxy);
 
 	/* Check for an authentication failure. */
-	if (parser->status_code == 401 && get_verb == s->verb)
+	if (parser->status_code == 401)
 		return on_auth_required(
 		    parser,
 		    &t->server,
