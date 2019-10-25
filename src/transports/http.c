@@ -25,6 +25,8 @@
 #include "streams/tls.h"
 #include "streams/socket.h"
 
+bool git_http__expect_continue = false;
+
 git_http_auth_scheme auth_schemes[] = {
 	{ GIT_AUTHTYPE_NEGOTIATE, "Negotiate", GIT_CREDTYPE_DEFAULT, git_http_auth_negotiate },
 	{ GIT_AUTHTYPE_NTLM, "NTLM", GIT_CREDTYPE_USERPASS_PLAINTEXT, git_http_auth_ntlm },
@@ -1523,7 +1525,10 @@ done:
 
 static int http_stream_write_request(http_stream *s, size_t len)
 {
-	return http_stream_write_request_expectcontinue(s, len);
+	if (git_http__expect_continue)
+		return http_stream_write_request_expectcontinue(s, len);
+	else
+		return http_stream_write_request_standard(s, len);
 }
 
 static int http_stream_write_chunked(
