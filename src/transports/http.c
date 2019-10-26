@@ -86,6 +86,7 @@ typedef struct {
 	git_cred *cred;
 	unsigned url_cred_presented : 1,
 	    authenticated : 1;
+	git_http_authtype_t prior_authtype;
 
 	git_vector auth_challenges;
 	git_http_auth_context *auth_context;
@@ -1059,8 +1060,10 @@ static void reset_auth_connection(http_server *server)
 	 */
 
 	if (server->authenticated &&
-	    server->auth_context &&
+		server->auth_context &&
 	    server->auth_context->connection_affinity) {
+		server->prior_authtype = server->auth_context->type;
+
 		free_auth_context(server);
 
 		server->url_cred_presented = 0;
@@ -1523,9 +1526,27 @@ done:
 	return error;
 }
 
+static bool needs_negotiated_auth(http_stream *s)
+{
+	http_subtransport *t = OWNING_SUBTRANSPORT(s);
+
+	if (t->server.authenticated == 0 &&
+	    (t->server.prior_authtype == GIT_AUTHTYPE_NTLM ||
+	     t->server.prior_authtype == GIT_AUTHTYPE_NEGOTIATE))
+		return true;
+
+	if (t->proxy.authenticated == 0 &&
+	    (t->proxy.prior_authtype == GIT_AUTHTYPE_NTLM ||
+	     t->proxy.prior_authtype == GIT_AUTHTYPE_NEGOTIATE))
+		return true;
+
+	return false;
+}
+
 static int http_stream_write_request(http_stream *s, size_t len)
 {
-	if (git_http__expect_continue)
+
+	if (needs_negotiated_auth(s) && git_http__expect_continue)
 		return http_stream_write_request_expectcontinue(s, len);
 	else
 		return http_stream_write_request_standard(s, len);

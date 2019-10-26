@@ -399,8 +399,8 @@ typedef enum {
  *		> accessing packfiles, which can help performance with remote filesystems.
  *
  *	 opts(GIT_OPT_ENABLE_EXPECT_CONTINUE, int enabled)
- *		> This will cause POST requests to use expect/continue,
- *		> useful for speaking NTLM or Negotiate authentication.
+ *		> When connecting to a server using NTLM or Negotiate
+ *		> authentication, use expect/continue when POSTing data.
  *		> This option is not available on Windows.
  *
  * @param option Option key
