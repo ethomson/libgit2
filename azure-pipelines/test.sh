@@ -217,6 +217,7 @@ if [ -z "$SKIP_NEGOTIATE_TESTS" -a -n "$GITTEST_NEGOTIATE_PASSWORD" ]; then
 	fi
 
 	echo $GITTEST_NEGOTIATE_PASSWORD | kinit $KINIT_FLAGS test@LIBGIT2.ORG
+	klist -5f
 
 	export GITTEST_REMOTE_URL="https://test.libgit2.org/kerberos/empty.git"
 	export GITTEST_REMOTE_DEFAULT="true"
