@@ -932,8 +932,6 @@ static int proxy_headers_complete(http_parser *parser)
 	return 0;
 }
 
-
-
 static int read_response(
 	size_t *bytes_read,
 	bool *auth_replay,
@@ -1442,6 +1440,127 @@ done:
 	return error;
 }
 
+static int probe_headers_complete(http_parser *parser)
+{
+	parser_context *ctx = (parser_context *) parser->data;
+	http_subtransport *t = ctx->t;
+
+	/* Both parse_header_name and parse_header_value are populated
+	 * and ready for consumption. */
+	if (t->last_cb == VALUE && on_header_ready(t) < 0)
+		return t->parse_error = PARSE_ERROR_GENERIC;
+
+	/* Check for a proxy authentication failure. */
+	if (parser->status_code == 407)
+		return on_auth_required(
+			parser,
+			&t->proxy,
+			t->proxy_opts.url,
+			SERVER_TYPE_PROXY,
+			t->proxy_opts.credentials,
+			t->proxy_opts.payload);
+	else
+		on_auth_success(&t->proxy);
+
+	/* Check for an authentication failure. */
+	if (parser->status_code == 401)
+		return on_auth_required(
+			parser,
+			&t->server,
+			t->owner->url,
+			SERVER_TYPE_REMOTE,
+			t->owner->cred_acquire_cb,
+			t->owner->cred_acquire_payload);
+	else
+		on_auth_success(&t->server);
+
+	if (parser->status_code != 200) {
+		git_error_set(GIT_ERROR_NET,
+		              "unexpected HTTP status code: %d",
+		              parser->status_code);
+		return t->parse_error = PARSE_ERROR_GENERIC;
+	}
+
+	return 0;
+}
+
+static int probe_message_complete(http_parser *parser)
+{
+	parser_context *ctx = (parser_context *) parser->data;
+	http_subtransport *t = ctx->t;
+
+	t->parse_finished = 1;
+	t->keepalive = http_should_keep_alive(parser);
+
+	return 0;
+}
+
+/*
+ * Some servers (eg, Apache) do not do "connection affinity" for NTLM or
+ * SPNEGO authentication.  Connection affinity is when an entire keep-alive
+ * session should be authenticated to prevent unnecessary challenge/request.
+ * Servers that don't do this will require us to do a challenge/response on
+ * every request.  This is terrible for POSTing data, since we're sending a
+ * whole payload in our initial request, then getting a 401 with a challenge,
+ * then sending the payload *again* with our response.  Worse, we don't
+ * buffer the POST data, so there's no way for us to resend it.
+ *
+ * Workaround this by sending an initial POST with a "probe packet" (a no-op
+ * git packet of "0000").  If we're talking to a server with connection
+ * affinity, then this will get a 200 and we can carry on with our
+ * actual POST.  If we're talking to a server without, we'll get a 401, and
+ * our subsequent POST will include the auth response.
+ */
+static int http_stream_write_request_with_probe(http_stream *s, size_t len)
+{
+	http_subtransport *t = OWNING_SUBTRANSPORT(s);
+	static http_parser_settings probe_parser_settings = {0};
+	git_buf request = GIT_BUF_INIT;
+	const char *probe = "0000";
+	size_t probe_len = strlen(probe);
+	size_t bytes_read = 0;
+	bool auth_replay;
+	int error;
+
+	/* Use the parser settings only to parse headers. */
+	probe_parser_settings.on_header_field = on_header_field;
+	probe_parser_settings.on_header_value = on_header_value;
+	probe_parser_settings.on_headers_complete = probe_headers_complete;
+	probe_parser_settings.on_message_complete = probe_message_complete;
+
+	clear_parser_state(t);
+	auth_replay = false;
+
+	if ((error = gen_request(&request, s, probe_len, false)) < 0 ||
+	    (error = stream_write(t->server.stream, request.ptr, request.size, 0)) < 0 ||
+	    (error = stream_write(t->server.stream, probe, probe_len, 0)) < 0)
+		goto done;
+
+	/* Consume the entire message body */
+	while ((error = read_response(&bytes_read, &auth_replay, NULL, t, &probe_parser_settings, NULL, 0)) > 0)
+		/* do nothing with the data */ ;
+
+	if (error < 0)
+		goto done;
+
+	/*
+	 * At this point, we either got a 200 (because we're talking to a
+	 * server that does SPNEGO connection affinity properly) or a 401.
+	 * Our subsequent request will provide the authentication headers
+	 * (if we got a 401) and our proper data.
+	 */
+	s->sent_request = 0;
+
+	if ((error = http_connect(t)) < 0)
+		return error;
+
+	error = http_stream_write_request_standard(s, len);
+
+done:
+	git_buf_dispose(&request);
+	return error;
+}
+
 static bool needs_negotiated_auth(http_stream *s)
 {
 	http_subtransport *t = OWNING_SUBTRANSPORT(s);
@@ -1463,6 +1582,8 @@ static int http_stream_write_request(http_stream *s, size_t len)
 {
 	if (needs_negotiated_auth(s) && git_http__expect_continue)
 		return http_stream_write_request_expectcontinue(s, len);
+	else if (needs_negotiated_auth(s))
+		return http_stream_write_request_with_probe(s, len);
 	else
 		return http_stream_write_request_standard(s, len);
 }
