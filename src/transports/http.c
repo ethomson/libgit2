@@ -1279,6 +1279,12 @@ replay:
 	t->request_count++;
 
 	if (auth_replay) {
+		if (s->verb == post_verb) {
+			git_error_set(GIT_ERROR_NET, "unrecoverable authentication failure during POST");
+			error = -1;
+			goto done;
+		}
+
 		s->sent_request = 0;
 
 		if ((error = http_connect(t)) < 0)
