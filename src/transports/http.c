@@ -734,6 +734,11 @@ static void clear_parser_state(http_subtransport *t)
 	git_vector_free_deep(&t->server.auth_challenges);
 }
 
+GIT_INLINE(int) stream_write(git_stream *stream, const char *data, size_t len, int flags)
+{
+	return git_stream__write_full(stream, data, len, flags);
+}
+
 static int write_chunk(git_stream *io, const char *buffer, size_t len)
 {
 	git_buf buf = GIT_BUF_INIT;
@@ -744,7 +749,7 @@ static int write_chunk(git_stream *io, const char *buffer, size_t len)
 	if (git_buf_oom(&buf))
 		return -1;
 
-	if (git_stream__write_full(io, buf.ptr, buf.size, 0) < 0) {
+	if (stream_write(io, buf.ptr, buf.size, 0) < 0) {
 		git_buf_dispose(&buf);
 		return -1;
 	}
@@ -752,11 +757,11 @@ static int write_chunk(git_stream *io, const char *buffer, size_t len)
 	git_buf_dispose(&buf);
 
 	/* Chunk body */
-	if (len > 0 && git_stream__write_full(io, buffer, len, 0) < 0)
+	if (len > 0 && stream_write(io, buffer, len, 0) < 0)
 		return -1;
 
 	/* Chunk footer */
-	if (git_stream__write_full(io, "\r\n", 2, 0) < 0)
+	if (stream_write(io, "\r\n", 2, 0) < 0)
 		return -1;
 
 	return 0;
@@ -1065,7 +1070,7 @@ replay:
 		sizeof(t->parse_buffer_data));
 
 	if ((error = gen_connect_req(&request, t)) < 0 ||
-	    (error = git_stream__write_full(proxy_stream, request.ptr, request.size, 0)) < 0 ||
+	    (error = stream_write(proxy_stream, request.ptr, request.size, 0)) < 0 ||
 	    (error = read_response(&bytes_read, &auth_replay, NULL, t, &proxy_parser_settings, NULL, 0)) < 0)
 		goto done;
 
@@ -1246,7 +1251,7 @@ replay:
 		clear_parser_state(t);
 
 		if ((error = gen_request(&request, s, 0, false)) < 0 ||
-		    (error = git_stream__write_full(t->server.stream, request.ptr, request.size, 0)) < 0)
+		    (error = stream_write(t->server.stream, request.ptr, request.size, 0)) < 0)
 			goto done;
 
 		s->sent_request = 1;
@@ -1265,7 +1270,7 @@ replay:
 			}
 
 			/* Write the final chunk. */
-			if ((error = git_stream__write_full(t->server.stream,
+			if ((error = stream_write(t->server.stream,
 						   "0\r\n\r\n", 5, 0)) < 0)
 				goto done;
 		}
@@ -1386,7 +1391,7 @@ replay:
 	auth_replay = false;
 
 	if ((error = gen_request(&request, s, len, true)) < 0 ||
-	    (error = git_stream__write_full(t->server.stream, request.ptr, request.size, 0)) < 0 ||
+	    (error = stream_write(t->server.stream, request.ptr, request.size, 0)) < 0 ||
 	    (error = read_response(&bytes_read, &auth_replay, NULL, t, &continue_parser_settings, NULL, 0)) < 0)
 		goto done;
 
@@ -1427,7 +1432,7 @@ static int http_stream_write_request_standard(http_stream *s, size_t len)
 	clear_parser_state(t);
 
 	if ((error = gen_request(&request, s, len, false)) < 0 ||
-	    (error = git_stream__write_full(t->server.stream, request.ptr, request.size, 0)) < 0)
+	    (error = stream_write(t->server.stream, request.ptr, request.size, 0)) < 0)
 		goto done;
 
 	s->sent_request = 1;
@@ -1542,7 +1547,7 @@ static int http_stream_write_single(
 	if (http_stream_write_request(s, len) < 0)
 		return -1;
 
-	if (len && git_stream__write_full(t->server.stream, buffer, len, 0) < 0)
+	if (len && stream_write(t->server.stream, buffer, len, 0) < 0)
 		return -1;
 
 	return 0;
