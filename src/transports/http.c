@@ -22,6 +22,7 @@
 #include "http.h"
 #include "auth_negotiate.h"
 #include "auth_ntlm.h"
+#include "trace.h"
 #include "streams/tls.h"
 #include "streams/socket.h"
 
@@ -736,6 +737,7 @@ static void clear_parser_state(http_subtransport *t)
 
 GIT_INLINE(int) stream_write(git_stream *stream, const char *data, size_t len, int flags)
 {
+	git_trace(GIT_TRACE_TRACE, "Sending request:\n%.*s", (int)len, data);
 	return git_stream__write_full(stream, data, len, flags);
 }
 
@@ -976,6 +978,8 @@ static int read_response(
 			error = -1;
 			goto done;
 		}
+
+		git_trace(GIT_TRACE_TRACE, "Receiving data:\n%.*s", t->parse_buffer.offset - data_offset, t->parse_buffer.data + data_offset);
 
 		t->parse_buffer.len = orig_buffer_len;
 
@@ -1387,6 +1391,8 @@ replay:
 	git_buf_clear(&request);
 	clear_parser_state(t);
 	auth_replay = false;
+
+	git_trace(GIT_TRACE_DEBUG, "Sending expect/continue request");
 
 	if ((error = gen_request(&request, s, len, true)) < 0 ||
 	    (error = stream_write(t->server.stream, request.ptr, request.size, 0)) < 0 ||
