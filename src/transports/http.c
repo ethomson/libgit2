@@ -1595,11 +1595,10 @@ static int http_stream_write_request(http_stream *s, size_t len)
 }
 
 static int http_stream_write_chunked(
-	git_smart_subtransport_stream *stream,
+	http_stream *s,
 	const char *buffer,
 	size_t len)
 {
-	http_stream *s = GIT_CONTAINER_OF(stream, http_stream, parent);
 	http_subtransport *t = OWNING_SUBTRANSPORT(s);
 
 	assert(t->connected);
@@ -1657,11 +1656,10 @@ static int http_stream_write_chunked(
 }
 
 static int http_stream_write_single(
-	git_smart_subtransport_stream *stream,
+	http_stream *s,
 	const char *buffer,
 	size_t len)
 {
-	http_stream *s = GIT_CONTAINER_OF(stream, http_stream, parent);
 	http_subtransport *t = OWNING_SUBTRANSPORT(s);
 
 	assert(t->connected);
@@ -1680,6 +1678,19 @@ static int http_stream_write_single(
 	return 0;
 }
 
+static int http_stream_write(
+	git_smart_subtransport_stream *stream,
+	const char *buffer,
+	size_t len)
+{
+	http_stream *s = GIT_CONTAINER_OF(stream, http_stream, parent);
+
+	if (s->chunked)
+		return http_stream_write_chunked(s, buffer, len);
+	else
+		return http_stream_write_single(s, buffer, len);
+}
+
 static void http_stream_free(git_smart_subtransport_stream *stream)
 {
 	http_stream *s = GIT_CONTAINER_OF(stream, http_stream, parent);
@@ -1693,112 +1704,105 @@ static void http_stream_free(git_smart_subtransport_stream *stream)
 	git__free(s);
 }
 
-static int http_stream_alloc(http_subtransport *t,
-	git_smart_subtransport_stream **stream)
+static int http_stream_alloc(
+	http_stream **out,
+	http_subtransport *transport)
 {
-	http_stream *s;
+	http_stream *stream;
 
-	if (!stream)
-		return -1;
+	assert(out);
 
-	s = git__calloc(sizeof(http_stream), 1);
-	GIT_ERROR_CHECK_ALLOC(s);
+	stream = git__calloc(sizeof(http_stream), 1);
+	GIT_ERROR_CHECK_ALLOC(stream);
 
-	s->parent.subtransport = &t->parent;
-	s->parent.read = http_stream_read;
-	s->parent.write = http_stream_write_single;
-	s->parent.free = http_stream_free;
+	stream->parent.subtransport = &transport->parent;
+	stream->parent.read = http_stream_read;
+	stream->parent.write = http_stream_write;
+	stream->parent.free = http_stream_free;
 
-	*stream = (git_smart_subtransport_stream *)s;
+	*out = stream;
 	return 0;
 }
 
 static int http_uploadpack_ls(
-	http_subtransport *t,
-	git_smart_subtransport_stream **stream)
+	git_smart_subtransport_stream **out,
+	http_subtransport *transport)
 {
-	http_stream *s;
+	http_stream *stream;
 
-	if (http_stream_alloc(t, stream) < 0)
+	if (http_stream_alloc(&stream, transport) < 0)
 		return -1;
 
-	s = (http_stream *)*stream;
+	stream->service = upload_pack_service;
+	stream->service_url = upload_pack_ls_service_url;
+	stream->verb = get_verb;
 
-	s->service = upload_pack_service;
-	s->service_url = upload_pack_ls_service_url;
-	s->verb = get_verb;
-
+	*out = (git_smart_subtransport_stream *)stream;
 	return 0;
 }
 
 static int http_uploadpack(
-	http_subtransport *t,
-	git_smart_subtransport_stream **stream)
+	git_smart_subtransport_stream **out,
+	http_subtransport *transport)
 {
-	http_stream *s;
+	http_stream *stream;
 
-	if (http_stream_alloc(t, stream) < 0)
+	if (http_stream_alloc(&stream, transport) < 0)
 		return -1;
 
-	s = (http_stream *)*stream;
+	stream->service = upload_pack_service;
+	stream->service_url = upload_pack_service_url;
+	stream->verb = post_verb;
 
-	s->service = upload_pack_service;
-	s->service_url = upload_pack_service_url;
-	s->verb = post_verb;
-
+	*out = (git_smart_subtransport_stream *)stream;
 	return 0;
 }
 
 static int http_receivepack_ls(
-	http_subtransport *t,
-	git_smart_subtransport_stream **stream)
+	git_smart_subtransport_stream **out,
+	http_subtransport *transport)
 {
-	http_stream *s;
+	http_stream *stream;
 
-	if (http_stream_alloc(t, stream) < 0)
+	if (http_stream_alloc(&stream, transport) < 0)
 		return -1;
 
-	s = (http_stream *)*stream;
+	stream->service = receive_pack_service;
+	stream->service_url = receive_pack_ls_service_url;
+	stream->verb = get_verb;
 
-	s->service = receive_pack_service;
-	s->service_url = receive_pack_ls_service_url;
-	s->verb = get_verb;
-
+	*out = (git_smart_subtransport_stream *)stream;
 	return 0;
 }
 
 static int http_receivepack(
-	http_subtransport *t,
-	git_smart_subtransport_stream **stream)
+	git_smart_subtransport_stream **out,
+	http_subtransport *transport)
 {
-	http_stream *s;
+	http_stream *stream;
 
-	if (http_stream_alloc(t, stream) < 0)
+	if (http_stream_alloc(&stream, transport) < 0)
 		return -1;
 
-	s = (http_stream *)*stream;
+	stream->chunked = 1;
+	stream->service = receive_pack_service;
+	stream->service_url = receive_pack_service_url;
+	stream->verb = post_verb;
 
-	/* Use Transfer-Encoding: chunked for this request */
-	s->chunked = 1;
-	s->parent.write = http_stream_write_chunked;
-
-	s->service = receive_pack_service;
-	s->service_url = receive_pack_service_url;
-	s->verb = post_verb;
-
+	*out = (git_smart_subtransport_stream *)stream;
 	return 0;
 }
 
 static int http_action(
-	git_smart_subtransport_stream **stream,
-	git_smart_subtransport *subtransport,
+	git_smart_subtransport_stream **out,
+	git_smart_subtransport *t,
 	const char *url,
 	git_smart_service_t action)
 {
-	http_subtransport *t = GIT_CONTAINER_OF(subtransport, http_subtransport, parent);
-	int ret;
+	http_subtransport *transport = GIT_CONTAINER_OF(t, http_subtransport, parent);
+	int error;
 
-	assert(stream);
+	assert(out && t);
 
 	/*
 	 * If we've seen a redirect then preserve the location that we've
@@ -1807,103 +1811,101 @@ static int http_action(
 	 * have redirected us from HTTP->HTTPS and is using an auth mechanism
 	 * that would be insecure in plaintext (eg, HTTP Basic).
 	 */
-	if ((!t->server.url.host || !t->server.url.port || !t->server.url.path) &&
-	    (ret = git_net_url_parse(&t->server.url, url)) < 0)
-		return ret;
+	if (!git_net_url_valid(&transport->server.url) &&
+	    (error = git_net_url_parse(&transport->server.url, url)) < 0)
+		return error;
 
-	assert(t->server.url.host && t->server.url.port && t->server.url.path);
-
-	if ((ret = http_connect(t)) < 0)
-		return ret;
+	if ((error = http_connect(transport)) < 0)
+		return error;
 
 	switch (action) {
 	case GIT_SERVICE_UPLOADPACK_LS:
-		return http_uploadpack_ls(t, stream);
+		return http_uploadpack_ls(out, transport);
 
 	case GIT_SERVICE_UPLOADPACK:
-		return http_uploadpack(t, stream);
+		return http_uploadpack(out, transport);
 
 	case GIT_SERVICE_RECEIVEPACK_LS:
-		return http_receivepack_ls(t, stream);
+		return http_receivepack_ls(out, transport);
 
 	case GIT_SERVICE_RECEIVEPACK:
-		return http_receivepack(t, stream);
+		return http_receivepack(out, transport);
 	}
 
-	*stream = NULL;
+	git_error_set(GIT_ERROR_NET, "invalid action");
+	*out = NULL;
 	return -1;
 }
 
-static int http_close(git_smart_subtransport *subtransport)
+static int http_close(git_smart_subtransport *t)
 {
-	http_subtransport *t = GIT_CONTAINER_OF(subtransport, http_subtransport, parent);
+	http_subtransport *transport = GIT_CONTAINER_OF(t, http_subtransport, parent);
 
-	clear_parser_state(t);
+	clear_parser_state(transport);
 
-	t->connected = 0;
+	transport->connected = 0;
 
-	if (t->server.stream) {
-		git_stream_close(t->server.stream);
-		git_stream_free(t->server.stream);
-		t->server.stream = NULL;
+	if (transport->server.stream) {
+		git_stream_close(transport->server.stream);
+		git_stream_free(transport->server.stream);
+		transport->server.stream = NULL;
 	}
 
-	if (t->proxy.stream) {
-		git_stream_close(t->proxy.stream);
-		git_stream_free(t->proxy.stream);
-		t->proxy.stream = NULL;
+	if (transport->proxy.stream) {
+		git_stream_close(transport->proxy.stream);
+		git_stream_free(transport->proxy.stream);
+		transport->proxy.stream = NULL;
 	}
 
-	free_cred(&t->server.cred);
-	free_cred(&t->proxy.cred);
+	free_cred(&transport->server.cred);
+	free_cred(&transport->proxy.cred);
 
-	free_auth_context(&t->server);
-	free_auth_context(&t->proxy);
+	free_auth_context(&transport->server);
+	free_auth_context(&transport->proxy);
 
-	t->server.url_cred_presented = false;
-	t->proxy.url_cred_presented = false;
+	transport->server.url_cred_presented = false;
+	transport->proxy.url_cred_presented = false;
 
-	git_net_url_dispose(&t->server.url);
-	git_net_url_dispose(&t->proxy.url);
+	git_net_url_dispose(&transport->server.url);
+	git_net_url_dispose(&transport->proxy.url);
 
-	git__free(t->proxy_url);
-	t->proxy_url = NULL;
+	git__free(transport->proxy_url);
+	transport->proxy_url = NULL;
 
 	return 0;
 }
 
-static void http_free(git_smart_subtransport *subtransport)
+static void http_free(git_smart_subtransport *t)
 {
-	http_subtransport *t = GIT_CONTAINER_OF(subtransport, http_subtransport, parent);
+	http_subtransport *transport = GIT_CONTAINER_OF(t, http_subtransport, parent);
 
-	http_close(subtransport);
-	git__free(t);
+	http_close(t);
+	git__free(transport);
 }
 
 int git_smart_subtransport_http(git_smart_subtransport **out, git_transport *owner, void *param)
 {
-	http_subtransport *t;
+	http_subtransport *transport;
 
 	GIT_UNUSED(param);
 
-	if (!out)
-		return -1;
+	assert(out);
 
-	t = git__calloc(sizeof(http_subtransport), 1);
-	GIT_ERROR_CHECK_ALLOC(t);
+	transport = git__calloc(sizeof(http_subtransport), 1);
+	GIT_ERROR_CHECK_ALLOC(transport);
 
-	t->owner = (transport_smart *)owner;
-	t->parent.action = http_action;
-	t->parent.close = http_close;
-	t->parent.free = http_free;
+	transport->owner = (transport_smart *)owner;
+	transport->parent.action = http_action;
+	transport->parent.close = http_close;
+	transport->parent.free = http_free;
 
-	t->settings.on_header_field = on_header_field;
-	t->settings.on_header_value = on_header_value;
-	t->settings.on_headers_complete = on_headers_complete;
-	t->settings.on_body = on_body_fill_buffer;
-	t->settings.on_message_complete = on_message_complete;
+	transport->settings.on_header_field = on_header_field;
+	transport->settings.on_header_value = on_header_value;
+	transport->settings.on_headers_complete = on_headers_complete;
+	transport->settings.on_body = on_body_fill_buffer;
+	transport->settings.on_message_complete = on_message_complete;
 
-	*out = (git_smart_subtransport *) t;
+	*out = (git_smart_subtransport *) transport;
 	return 0;
 }
 
