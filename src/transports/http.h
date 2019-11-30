@@ -12,6 +12,16 @@
 
 #define GIT_HTTP_REPLAY_MAX 15
 
+typedef enum { GET, POST } git_http_verb;
+
+typedef struct
+{
+	git_http_verb verb;
+	const char *name;
+	const char *url;
+	unsigned chunked : 1;
+} git_http_service;
+
 extern bool git_http__expect_continue;
 
 GIT_INLINE(int) git_http__user_agent(git_buf *buf)

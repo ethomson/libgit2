@@ -34,14 +34,18 @@ git_http_auth_scheme auth_schemes[] = {
 	{ GIT_AUTHTYPE_BASIC, "Basic", GIT_CREDTYPE_USERPASS_PLAINTEXT, git_http_auth_basic },
 };
 
-static const char *upload_pack_service = "upload-pack";
-static const char *upload_pack_ls_service_url = "/info/refs?service=git-upload-pack";
-static const char *upload_pack_service_url = "/git-upload-pack";
-static const char *receive_pack_service = "receive-pack";
-static const char *receive_pack_ls_service_url = "/info/refs?service=git-receive-pack";
-static const char *receive_pack_service_url = "/git-receive-pack";
-static const char *get_verb = "GET";
-static const char *post_verb = "POST";
+git_http_service upload_pack_ls_service = {
+	GET, "upload-pack", "/info/refs?service=git-upload-pack", 0
+};
+git_http_service upload_pack_service = {
+	POST, "upload-pack", "/git-upload-pack", 0
+};
+git_http_service receive_pack_ls_service = {
+	GET, "receive-pack", "/info/refs?service=git-receive-pack", 0
+};
+git_http_service receive_pack_service = {
+	POST, "receive-pack", "/git-receive-pack", 1
+};
 
 #define AUTH_HEADER_SERVER "Authorization"
 #define AUTH_HEADER_PROXY  "Proxy-Authorization"
@@ -66,15 +70,12 @@ enum last_cb {
 
 typedef struct {
 	git_smart_subtransport_stream parent;
-	const char *service;
-	const char *service_url;
+	git_http_service *service;
 	char *redirect_url;
-	const char *verb;
 	char *chunk_buffer;
 	unsigned chunk_buffer_len;
 	unsigned sent_request : 1,
-		received_response : 1,
-		chunked : 1;
+		received_response : 1;
 } http_stream;
 
 typedef struct {
@@ -188,19 +189,21 @@ static int gen_request(
 	bool expect_continue)
 {
 	http_subtransport *t = OWNING_SUBTRANSPORT(s);
+	const char *verb = s->service->verb == POST ? "POST" : "GET";
 	const char *path = t->server.url.path ? t->server.url.path : "/";
 	size_t i;
 
 	if (t->proxy_opts.type == GIT_PROXY_SPECIFIED)
 		git_buf_printf(buf, "%s %s://%s:%s%s%s HTTP/1.1\r\n",
-			s->verb,
+			verb,
 			t->server.url.scheme,
 			t->server.url.host,
 			t->server.url.port,
-			path, s->service_url);
+			path,
+			s->service->url);
 	else
 		git_buf_printf(buf, "%s %s%s HTTP/1.1\r\n",
-			s->verb, path, s->service_url);
+			verb, path, s->service->url);
 
 	git_buf_puts(buf, "User-Agent: ");
 	git_http__user_agent(buf);
@@ -212,11 +215,11 @@ static int gen_request(
 
 	git_buf_puts(buf, "\r\n");
 
-	if (s->chunked || content_length > 0) {
-		git_buf_printf(buf, "Accept: application/x-git-%s-result\r\n", s->service);
-		git_buf_printf(buf, "Content-Type: application/x-git-%s-request\r\n", s->service);
+	if (s->service->chunked || content_length > 0) {
+		git_buf_printf(buf, "Accept: application/x-git-%s-result\r\n", s->service->name);
+		git_buf_printf(buf, "Content-Type: application/x-git-%s-request\r\n", s->service->name);
 
-		if (s->chunked)
+		if (s->service->chunked)
 			git_buf_puts(buf, "Transfer-Encoding: chunked\r\n");
 		else
 			git_buf_printf(buf, "Content-Length: %"PRIuZ "\r\n", content_length);
@@ -609,12 +612,12 @@ static int on_headers_complete(http_parser *parser)
 	 * Right now we only permit a redirect to the same hostname. */
 	if ((parser->status_code == 301 ||
 	     parser->status_code == 302 ||
-	     (parser->status_code == 303 && get_verb == s->verb) ||
+	     (parser->status_code == 303 && s->service->verb == GET) ||
 	     parser->status_code == 307 ||
 	     parser->status_code == 308) &&
 	    t->location) {
 
-		if (gitno_connection_data_handle_redirect(&t->server.url, t->location, s->service_url) < 0)
+		if (gitno_connection_data_handle_redirect(&t->server.url, t->location, s->service->url) < 0)
 			return t->parse_error = PARSE_ERROR_GENERIC;
 
 		/* Set the redirect URL on the stream. This is a transfer of
@@ -645,14 +648,14 @@ static int on_headers_complete(http_parser *parser)
 	}
 
 	/* The Content-Type header must match our expectation. */
-	if (get_verb == s->verb)
+	if (s->service->verb == GET)
 		git_buf_printf(&buf,
 			"application/x-git-%s-advertisement",
-			ctx->s->service);
+			ctx->s->service->name);
 	else
 		git_buf_printf(&buf,
 			"application/x-git-%s-result",
-			ctx->s->service);
+			ctx->s->service->name);
 
 	if (git_buf_oom(&buf))
 		return t->parse_error = PARSE_ERROR_GENERIC;
@@ -1260,8 +1263,8 @@ replay:
 	}
 
 	if (!s->received_response) {
-		if (s->chunked) {
-			assert(s->verb == post_verb);
+		if (s->service->chunked) {
+			assert(s->service->verb == POST);
 
 			/* Flush, if necessary */
 			if (s->chunk_buffer_len > 0) {
@@ -1286,7 +1289,7 @@ replay:
 	t->request_count++;
 
 	if (auth_replay) {
-		if (s->verb == post_verb) {
+		if (s->service->verb == POST) {
 			git_error_set(GIT_ERROR_NET, "unrecoverable authentication failure during POST");
 			error = -1;
 			goto done;
@@ -1685,7 +1688,7 @@ static int http_stream_write(
 {
 	http_stream *s = GIT_CONTAINER_OF(stream, http_stream, parent);
 
-	if (s->chunked)
+	if (s->service->chunked)
 		return http_stream_write_chunked(s, buffer, len);
 	else
 		return http_stream_write_single(s, buffer, len);
@@ -1733,9 +1736,7 @@ static int http_uploadpack_ls(
 	if (http_stream_alloc(&stream, transport) < 0)
 		return -1;
 
-	stream->service = upload_pack_service;
-	stream->service_url = upload_pack_ls_service_url;
-	stream->verb = get_verb;
+	stream->service = &upload_pack_ls_service;
 
 	*out = (git_smart_subtransport_stream *)stream;
 	return 0;
@@ -1750,9 +1751,7 @@ static int http_uploadpack(
 	if (http_stream_alloc(&stream, transport) < 0)
 		return -1;
 
-	stream->service = upload_pack_service;
-	stream->service_url = upload_pack_service_url;
-	stream->verb = post_verb;
+	stream->service = &upload_pack_service;
 
 	*out = (git_smart_subtransport_stream *)stream;
 	return 0;
@@ -1767,9 +1766,7 @@ static int http_receivepack_ls(
 	if (http_stream_alloc(&stream, transport) < 0)
 		return -1;
 
-	stream->service = receive_pack_service;
-	stream->service_url = receive_pack_ls_service_url;
-	stream->verb = get_verb;
+	stream->service = &receive_pack_ls_service;
 
 	*out = (git_smart_subtransport_stream *)stream;
 	return 0;
@@ -1784,10 +1781,7 @@ static int http_receivepack(
 	if (http_stream_alloc(&stream, transport) < 0)
 		return -1;
 
-	stream->chunked = 1;
-	stream->service = receive_pack_service;
-	stream->service_url = receive_pack_service_url;
-	stream->verb = post_verb;
+	stream->service = &receive_pack_service;
 
 	*out = (git_smart_subtransport_stream *)stream;
 	return 0;
