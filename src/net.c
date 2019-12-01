@@ -153,6 +153,82 @@ done:
 	return error;
 }
 
+int git_net_url_apply_redirect(
+	git_net_url *url,
+	const char *redirect_location,
+	const char *service_suffix)
+{
+	git_net_url tmp = GIT_NET_URL_INIT;
+	int error = 0;
+
+	assert(url && redirect_location);
+
+	if (redirect_location[0] == '/') {
+		git__free(url->path);
+
+		if ((url->path = git__strdup(redirect_location)) == NULL) {
+			error = -1;
+			goto done;
+		}
+	} else {
+		git_net_url *original = url;
+
+		if ((error = git_net_url_parse(&tmp, redirect_location)) < 0)
+			goto done;
+
+		/* Validate that this is a legal redirection */
+
+		if (original->scheme &&
+		    strcmp(original->scheme, tmp.scheme) != 0 &&
+			strcmp(tmp.scheme, "https") != 0) {
+			git_error_set(GIT_ERROR_NET, "cannot redirect from '%s' to '%s'",
+				original->scheme, tmp.scheme);
+
+			error = -1;
+			goto done;
+		}
+
+		if (original->host &&
+		    git__strcasecmp(original->host, tmp.host) != 0) {
+			git_error_set(GIT_ERROR_NET, "cannot redirect from '%s' to '%s'",
+				original->host, tmp.host);
+
+			error = -1;
+			goto done;
+		}
+
+		git_net_url_swap(url, &tmp);
+	}
+
+	/* Remove the service suffix if it was given to us */
+	if (service_suffix) {
+		const char *service_query = strchr(service_suffix, '?');
+		size_t suffix_len = service_query ?
+			(size_t)(service_query - service_suffix) : strlen(service_suffix);
+		size_t path_len = strlen(url->path);
+
+		if (suffix_len && path_len >= suffix_len) {
+			size_t suffix_offset = path_len - suffix_len;
+
+			if (git__strncmp(url->path + suffix_offset, service_suffix, suffix_len) == 0 &&
+			    (!service_query || git__strcmp(url->query, service_query + 1) == 0)) {
+				/* Ensure we leave a minimum of '/' as the path */
+				if (suffix_offset == 0)
+					suffix_offset++;
+
+				url->path[suffix_offset] = '\0';
+
+				git__free(url->query);
+				url->query = NULL;
+			}
+		}
+	}
+
+done:
+	git_net_url_dispose(&tmp);
+	return error;
+}
+
 bool git_net_url_valid(git_net_url *url)
 {
 	return (url->host && url->port && url->path);
