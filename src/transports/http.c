@@ -35,16 +35,28 @@ git_http_auth_scheme auth_schemes[] = {
 };
 
 git_http_service upload_pack_ls_service = {
-	GET, "upload-pack", "/info/refs?service=git-upload-pack", 0
+	GET, "/info/refs?service=git-upload-pack",
+	NULL,
+	"application/x-git-upload-pack-advertisement",
+	0
 };
 git_http_service upload_pack_service = {
-	POST, "upload-pack", "/git-upload-pack", 0
+	POST, "/git-upload-pack",
+	"application/x-git-upload-pack-request",
+	"application/x-git-upload-pack-result",
+	0
 };
 git_http_service receive_pack_ls_service = {
-	GET, "receive-pack", "/info/refs?service=git-receive-pack", 0
+	GET, "/info/refs?service=git-receive-pack",
+	NULL,
+	"application/x-git-receive-pack-advertisement",
+	0
 };
 git_http_service receive_pack_service = {
-	POST, "receive-pack", "/git-receive-pack", 1
+	POST, "/git-receive-pack",
+	"application/x-git-receive-pack-request",
+	"application/x-git-receive-pack-result",
+	0
 };
 
 #define AUTH_HEADER_SERVER "Authorization"
@@ -61,12 +73,6 @@ git_http_service receive_pack_service = {
 #define PARSE_ERROR_EXT         -3
 
 #define CHUNK_SIZE	4096
-
-enum last_cb {
-	NONE,
-	FIELD,
-	VALUE
-};
 
 typedef struct {
 	git_smart_subtransport_stream parent;
@@ -94,6 +100,13 @@ typedef struct {
 	git_http_auth_context *auth_context;
 } http_server;
 
+typedef enum {
+	PARSE_HEADER_NONE = 0,
+	PARSE_HEADER_NAME,
+	PARSE_HEADER_VALUE,
+	PARSE_HEADER_COMPLETE
+} parse_header_state;
+
 typedef struct {
 	git_smart_subtransport parent;
 	transport_smart *owner;
@@ -110,13 +123,13 @@ typedef struct {
 	http_parser parser;
 	http_parser_settings settings;
 	gitno_buffer parse_buffer;
+	parse_header_state parse_header_state;
 	git_buf parse_header_name;
 	git_buf parse_header_value;
 	char parse_buffer_data[NETIO_BUFSIZE];
 	char *content_type;
 	char *content_length;
 	char *location;
-	enum last_cb last_cb;
 	int parse_error;
 	int error;
 	unsigned request_count;
@@ -216,8 +229,8 @@ static int gen_request(
 	git_buf_puts(buf, "\r\n");
 
 	if (s->service->chunked || content_length > 0) {
-		git_buf_printf(buf, "Accept: application/x-git-%s-result\r\n", s->service->name);
-		git_buf_printf(buf, "Content-Type: application/x-git-%s-request\r\n", s->service->name);
+		git_buf_printf(buf, "Accept: %s\r\n", s->service->response_type);
+		git_buf_printf(buf, "Content-Type: %s\r\n", s->service->request_type);
 
 		if (s->service->chunked)
 			git_buf_puts(buf, "Transfer-Encoding: chunked\r\n");
@@ -332,7 +345,7 @@ static int parse_authenticate_response(http_server *server)
 		return set_authentication_types(server);
 }
 
-static int on_header_ready(http_subtransport *t)
+static int on_header_complete(http_subtransport *t)
 {
 	git_buf *name = &t->parse_header_name;
 	git_buf *value = &t->parse_header_value;
@@ -343,7 +356,7 @@ static int on_header_ready(http_subtransport *t)
 			return -1;
 		}
 
-		t->content_type = git__strdup(git_buf_cstr(value));
+		t->content_type = git__strndup(value->ptr, value->size);
 		GIT_ERROR_CHECK_ALLOC(t->content_type);
 	}
 	else if (!strcasecmp("Content-Length", git_buf_cstr(name))) {
@@ -352,18 +365,18 @@ static int on_header_ready(http_subtransport *t)
 			return -1;
 		}
 
-		t->content_length = git__strdup(git_buf_cstr(value));
+		t->content_length = git__strndup(value->ptr, value->size);
 		GIT_ERROR_CHECK_ALLOC(t->content_length);
 	}
 	else if (!strcasecmp("Proxy-Authenticate", git_buf_cstr(name))) {
-		char *dup = git__strdup(git_buf_cstr(value));
+		char *dup = git__strndup(value->ptr, value->size);
 		GIT_ERROR_CHECK_ALLOC(dup);
 
 		if (git_vector_insert(&t->proxy.auth_challenges, dup) < 0)
 			return -1;
 	}
 	else if (!strcasecmp("WWW-Authenticate", git_buf_cstr(name))) {
-		char *dup = git__strdup(git_buf_cstr(value));
+		char *dup = git__strndup(value->ptr, value->size);
 		GIT_ERROR_CHECK_ALLOC(dup);
 
 		if (git_vector_insert(&t->server.auth_challenges, dup) < 0)
@@ -375,7 +388,7 @@ static int on_header_ready(http_subtransport *t)
 			return -1;
 		}
 
-		t->location = git__strdup(git_buf_cstr(value));
+		t->location = git__strndup(value->ptr, value->size);
 		GIT_ERROR_CHECK_ALLOC(t->location);
 	}
 
@@ -387,19 +400,21 @@ static int on_header_field(http_parser *parser, const char *str, size_t len)
 	parser_context *ctx = (parser_context *) parser->data;
 	http_subtransport *t = ctx->t;
 
-	/* Both parse_header_name and parse_header_value are populated
-	 * and ready for consumption */
-	if (VALUE == t->last_cb)
-		if (on_header_ready(t) < 0)
-			return t->parse_error = PARSE_ERROR_GENERIC;
+	/* We last saw a piece of a header value */
+	if (t->parse_header_state == PARSE_HEADER_VALUE &&
+	    on_header_complete(t) < 0)
+		return t->parse_error = PARSE_ERROR_GENERIC;
 
-	if (NONE == t->last_cb || VALUE == t->last_cb)
+	if (t->parse_header_state != PARSE_HEADER_NAME) {
 		git_buf_clear(&t->parse_header_name);
+		git_buf_clear(&t->parse_header_value);
+	}
+
+	t->parse_header_state = PARSE_HEADER_NAME;
 
 	if (git_buf_put(&t->parse_header_name, str, len) < 0)
 		return t->parse_error = PARSE_ERROR_GENERIC;
 
-	t->last_cb = FIELD;
 	return 0;
 }
 
@@ -408,15 +423,11 @@ static int on_header_value(http_parser *parser, const char *str, size_t len)
 	parser_context *ctx = (parser_context *) parser->data;
 	http_subtransport *t = ctx->t;
 
-	assert(NONE != t->last_cb);
-
-	if (FIELD == t->last_cb)
-		git_buf_clear(&t->parse_header_value);
+	t->parse_header_state = PARSE_HEADER_VALUE;
 
 	if (git_buf_put(&t->parse_header_value, str, len) < 0)
 		return t->parse_error = PARSE_ERROR_GENERIC;
 
-	t->last_cb = VALUE;
 	return 0;
 }
 
@@ -577,12 +588,18 @@ static int on_headers_complete(http_parser *parser)
 	parser_context *ctx = (parser_context *) parser->data;
 	http_subtransport *t = ctx->t;
 	http_stream *s = ctx->s;
-	git_buf buf = GIT_BUF_INIT;
 
-	/* Both parse_header_name and parse_header_value are populated
-	 * and ready for consumption. */
-	if (t->last_cb == VALUE && on_header_ready(t) < 0)
+	/* Finalize the last seen header */
+	if (t->parse_header_state == PARSE_HEADER_VALUE &&
+	    on_header_complete(t) < 0)
+	    return t->parse_error = PARSE_ERROR_GENERIC;
+
+	if (t->parse_header_state == PARSE_HEADER_NAME) {
+		git_error_set(GIT_ERROR_NET, "invalid header handling");
 		return t->parse_error = PARSE_ERROR_GENERIC;
+	}
+
+	t->parse_header_state = PARSE_HEADER_COMPLETE;
 
 	/* Check for a proxy authentication failure. */
 	if (parser->status_code == 407)
@@ -648,27 +665,12 @@ static int on_headers_complete(http_parser *parser)
 	}
 
 	/* The Content-Type header must match our expectation. */
-	if (s->service->verb == GET)
-		git_buf_printf(&buf,
-			"application/x-git-%s-advertisement",
-			ctx->s->service->name);
-	else
-		git_buf_printf(&buf,
-			"application/x-git-%s-result",
-			ctx->s->service->name);
-
-	if (git_buf_oom(&buf))
-		return t->parse_error = PARSE_ERROR_GENERIC;
-
-	if (strcmp(t->content_type, git_buf_cstr(&buf))) {
-		git_buf_dispose(&buf);
+	if (strcmp(t->content_type, s->service->response_type) != 0) {
 		git_error_set(GIT_ERROR_NET,
 			"invalid Content-Type: %s",
 			t->content_type);
 		return t->parse_error = PARSE_ERROR_GENERIC;
 	}
-
-	git_buf_dispose(&buf);
 
 	return 0;
 }
@@ -714,7 +716,7 @@ static void clear_parser_state(http_subtransport *t)
 		t->parse_buffer_data,
 		sizeof(t->parse_buffer_data));
 
-	t->last_cb = NONE;
+	t->parse_header_state = PARSE_HEADER_NONE;
 	t->parse_error = 0;
 	t->parse_finished = 0;
 	t->keepalive = 0;
@@ -888,10 +890,18 @@ static int proxy_headers_complete(http_parser *parser)
 	parser_context *ctx = (parser_context *) parser->data;
 	http_subtransport *t = ctx->t;
 
-	/* Both parse_header_name and parse_header_value are populated
-	 * and ready for consumption. */
-	if (t->last_cb == VALUE && on_header_ready(t) < 0)
-			return t->parse_error = PARSE_ERROR_GENERIC;
+	if (t->parse_header_state == PARSE_HEADER_VALUE &&
+	    on_header_complete(t) < 0)
+	    return t->parse_error = PARSE_ERROR_GENERIC;
+
+	if (t->parse_header_state == PARSE_HEADER_NAME) {
+		git_error_set(GIT_ERROR_NET, "invalid header handling");
+		return t->parse_error = PARSE_ERROR_GENERIC;
+	}
+
+	t->parse_header_state = PARSE_HEADER_COMPLETE;
+
+	/* Check for a proxy authentication failure. */
 
 	/*
 	 * Capture authentication headers for the proxy or final endpoint,
@@ -1313,10 +1323,18 @@ static int continue_headers_complete(http_parser *parser)
 	parser_context *ctx = (parser_context *) parser->data;
 	http_subtransport *t = ctx->t;
 
-	/* Both parse_header_name and parse_header_value are populated
-	 * and ready for consumption. */
-	if (t->last_cb == VALUE && on_header_ready(t) < 0)
+	if (t->parse_header_state == PARSE_HEADER_VALUE &&
+	    on_header_complete(t) < 0)
+	    return t->parse_error = PARSE_ERROR_GENERIC;
+
+	if (t->parse_header_state == PARSE_HEADER_NAME) {
+		git_error_set(GIT_ERROR_NET, "invalid header handling");
 		return t->parse_error = PARSE_ERROR_GENERIC;
+	}
+
+	t->parse_header_state = PARSE_HEADER_COMPLETE;
+
+	/* Check for a proxy authentication failure. */
 
 	/* Check for a proxy authentication failure. */
 	if (parser->status_code == 407)
@@ -1454,10 +1472,18 @@ static int probe_headers_complete(http_parser *parser)
 	parser_context *ctx = (parser_context *) parser->data;
 	http_subtransport *t = ctx->t;
 
-	/* Both parse_header_name and parse_header_value are populated
-	 * and ready for consumption. */
-	if (t->last_cb == VALUE && on_header_ready(t) < 0)
+	if (t->parse_header_state == PARSE_HEADER_VALUE &&
+	    on_header_complete(t) < 0)
+	    return t->parse_error = PARSE_ERROR_GENERIC;
+
+	if (t->parse_header_state == PARSE_HEADER_NAME) {
+		git_error_set(GIT_ERROR_NET, "invalid header handling");
 		return t->parse_error = PARSE_ERROR_GENERIC;
+	}
+
+	t->parse_header_state = PARSE_HEADER_COMPLETE;
+
+	/* Check for a proxy authentication failure. */
 
 	/* Check for a proxy authentication failure. */
 	if (parser->status_code == 407)
