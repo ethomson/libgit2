@@ -1707,84 +1707,20 @@ static void http_stream_free(git_smart_subtransport_stream *stream)
 	git__free(s);
 }
 
-static int http_stream_alloc(
-	http_stream **out,
-	http_subtransport *transport)
+static git_http_service *select_service(git_smart_service_t action)
 {
-	http_stream *stream;
+	switch (action) {
+	case GIT_SERVICE_UPLOADPACK_LS:
+		return &upload_pack_ls_service;
+	case GIT_SERVICE_UPLOADPACK:
+		return &upload_pack_service;
+	case GIT_SERVICE_RECEIVEPACK_LS:
+		return &receive_pack_ls_service;
+	case GIT_SERVICE_RECEIVEPACK:
+		return &receive_pack_service;
+	}
 
-	assert(out);
-
-	stream = git__calloc(sizeof(http_stream), 1);
-	GIT_ERROR_CHECK_ALLOC(stream);
-
-	stream->parent.subtransport = &transport->parent;
-	stream->parent.read = http_stream_read;
-	stream->parent.write = http_stream_write;
-	stream->parent.free = http_stream_free;
-
-	*out = stream;
-	return 0;
-}
-
-static int http_uploadpack_ls(
-	git_smart_subtransport_stream **out,
-	http_subtransport *transport)
-{
-	http_stream *stream;
-
-	if (http_stream_alloc(&stream, transport) < 0)
-		return -1;
-
-	stream->service = &upload_pack_ls_service;
-
-	*out = (git_smart_subtransport_stream *)stream;
-	return 0;
-}
-
-static int http_uploadpack(
-	git_smart_subtransport_stream **out,
-	http_subtransport *transport)
-{
-	http_stream *stream;
-
-	if (http_stream_alloc(&stream, transport) < 0)
-		return -1;
-
-	stream->service = &upload_pack_service;
-
-	*out = (git_smart_subtransport_stream *)stream;
-	return 0;
-}
-
-static int http_receivepack_ls(
-	git_smart_subtransport_stream **out,
-	http_subtransport *transport)
-{
-	http_stream *stream;
-
-	if (http_stream_alloc(&stream, transport) < 0)
-		return -1;
-
-	stream->service = &receive_pack_ls_service;
-
-	*out = (git_smart_subtransport_stream *)stream;
-	return 0;
-}
-
-static int http_receivepack(
-	git_smart_subtransport_stream **out,
-	http_subtransport *transport)
-{
-	http_stream *stream;
-
-	if (http_stream_alloc(&stream, transport) < 0)
-		return -1;
-
-	stream->service = &receive_pack_service;
-
-	*out = (git_smart_subtransport_stream *)stream;
-	return 0;
+	return NULL;
 }
 
 static int http_action(
@@ -1794,9 +1730,13 @@ static int http_action(
 	git_smart_service_t action)
 {
 	http_subtransport *transport = GIT_CONTAINER_OF(t, http_subtransport, parent);
+	http_stream *stream;
+	git_http_service *service;
 	int error;
 
 	assert(out && t);
+
+	*out = NULL;
 
 	/*
 	 * If we've seen a redirect then preserve the location that we've
@@ -1812,23 +1752,22 @@ static int http_action(
 	if ((error = http_connect(transport)) < 0)
 		return error;
 
-	switch (action) {
-	case GIT_SERVICE_UPLOADPACK_LS:
-		return http_uploadpack_ls(out, transport);
-
-	case GIT_SERVICE_UPLOADPACK:
-		return http_uploadpack(out, transport);
-
-	case GIT_SERVICE_RECEIVEPACK_LS:
-		return http_receivepack_ls(out, transport);
-
-	case GIT_SERVICE_RECEIVEPACK:
-		return http_receivepack(out, transport);
+	if ((service = select_service(action)) == NULL) {
+		git_error_set(GIT_ERROR_NET, "invalid action");
+		return -1;
 	}
 
-	git_error_set(GIT_ERROR_NET, "invalid action");
-	*out = NULL;
-	return -1;
+	stream = git__calloc(sizeof(http_stream), 1);
+	GIT_ERROR_CHECK_ALLOC(stream);
+
+	stream->service = service;
+	stream->parent.subtransport = &transport->parent;
+	stream->parent.read = http_stream_read;
+	stream->parent.write = http_stream_write;
+	stream->parent.free = http_stream_free;
+
+	*out = (git_smart_subtransport_stream *)stream;
+	return 0;
 }
 
 static int http_close(git_smart_subtransport *t)
