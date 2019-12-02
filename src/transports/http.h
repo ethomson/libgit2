@@ -17,8 +17,9 @@ typedef enum { GET, POST } git_http_verb;
 typedef struct
 {
 	git_http_verb verb;
-	const char *name;
 	const char *url;
+	const char *request_type;
+	const char *response_type;
 	unsigned chunked : 1;
 } git_http_service;
 
