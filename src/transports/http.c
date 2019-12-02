@@ -583,6 +583,34 @@ static void on_auth_success(http_server *server)
 	server->authenticated = 1;
 }
 
+GIT_INLINE(int) on_proxy_auth_required(http_parser *parser)
+{
+	parser_context *ctx = (parser_context *) parser->data;
+	http_subtransport *transport = ctx->t;
+
+	return on_auth_required(
+	    parser,
+	    &transport->proxy,
+	    transport->proxy_opts.url,
+	    SERVER_TYPE_PROXY,
+	    transport->proxy_opts.credentials,
+	    transport->proxy_opts.payload);
+}
+
+GIT_INLINE(int) on_remote_auth_required(http_parser *parser)
+{
+	parser_context *ctx = (parser_context *) parser->data;
+	http_subtransport *transport = ctx->t;
+
+	return on_auth_required(
+	    parser,
+	    &transport->server,
+	    transport->owner->url,
+	    SERVER_TYPE_REMOTE,
+	    transport->owner->cred_acquire_cb,
+	    transport->owner->cred_acquire_payload);
+}
+
 static int on_headers_complete(http_parser *parser)
 {
 	parser_context *ctx = (parser_context *) parser->data;
@@ -603,25 +631,13 @@ static int on_headers_complete(http_parser *parser)
 
 	/* Check for a proxy authentication failure. */
 	if (parser->status_code == 407)
-		return on_auth_required(
-		    parser,
-		    &t->proxy,
-		    t->proxy_opts.url,
-		    SERVER_TYPE_PROXY,
-		    t->proxy_opts.credentials,
-		    t->proxy_opts.payload);
+		return on_proxy_auth_required(parser);
 	else
 		on_auth_success(&t->proxy);
 
 	/* Check for an authentication failure. */
 	if (parser->status_code == 401)
-		return on_auth_required(
-		    parser,
-		    &t->server,
-		    t->owner->url,
-		    SERVER_TYPE_REMOTE,
-		    t->owner->cred_acquire_cb,
-		    t->owner->cred_acquire_payload);
+		return on_remote_auth_required(parser);
 	else
 		on_auth_success(&t->server);
 
@@ -1330,25 +1346,13 @@ static int continue_headers_complete(http_parser *parser)
 
 	/* Check for a proxy authentication failure. */
 	if (parser->status_code == 407)
-		return on_auth_required(
-								parser,
-								&t->proxy,
-								t->proxy_opts.url,
-								SERVER_TYPE_PROXY,
-								t->proxy_opts.credentials,
-								t->proxy_opts.payload);
+		return on_remote_auth_required(parser);
 	else
 		on_auth_success(&t->proxy);
 
 	/* Check for an authentication failure. */
 	if (parser->status_code == 401)
-		return on_auth_required(
-								parser,
-								&t->server,
-								t->owner->url,
-								SERVER_TYPE_REMOTE,
-								t->owner->cred_acquire_cb,
-								t->owner->cred_acquire_payload);
+		return on_proxy_auth_required(parser);
 	else
 		on_auth_success(&t->server);
 
@@ -1479,25 +1483,13 @@ static int probe_headers_complete(http_parser *parser)
 
 	/* Check for a proxy authentication failure. */
 	if (parser->status_code == 407)
-		return on_auth_required(
-			parser,
-			&t->proxy,
-			t->proxy_opts.url,
-			SERVER_TYPE_PROXY,
-			t->proxy_opts.credentials,
-			t->proxy_opts.payload);
+		return on_proxy_auth_required(parser);
 	else
 		on_auth_success(&t->proxy);
 
 	/* Check for an authentication failure. */
 	if (parser->status_code == 401)
-		return on_auth_required(
-			parser,
-			&t->server,
-			t->owner->url,
-			SERVER_TYPE_REMOTE,
-			t->owner->cred_acquire_cb,
-			t->owner->cred_acquire_payload);
+		return on_remote_auth_required(parser);
 	else
 		on_auth_success(&t->server);
 
