@@ -153,6 +153,99 @@ done:
 	return error;
 }
 
+GIT_INLINE(int) dup_common(git_net_url *out, git_net_url *in)
+{
+	if (in->scheme) {
+		out->scheme = git__strdup(in->scheme);
+		GIT_ERROR_CHECK_ALLOC(out->scheme);
+	}
+
+	if (in->host) {
+		out->host = git__strdup(in->host);
+		GIT_ERROR_CHECK_ALLOC(out->host);
+	}
+
+	if (in->port) {
+		out->port = git__strdup(in->port);
+		GIT_ERROR_CHECK_ALLOC(out->port);
+	}
+
+	if (in->username) {
+		out->username = git__strdup(in->username);
+		GIT_ERROR_CHECK_ALLOC(out->username);
+	}
+
+	if (in->password) {
+		out->password = git__strdup(in->password);
+		GIT_ERROR_CHECK_ALLOC(out->password);
+	}
+
+	return 0;
+}
+
+int git_net_url_dup(git_net_url *out, git_net_url *in)
+{
+	assert(out && in);
+
+	if (dup_common(out, in) < 0)
+		return -1;
+
+	if (in->path) {
+		out->path = git__strdup(in->path);
+		GIT_ERROR_CHECK_ALLOC(out->path);
+	}
+
+	if (in->query) {
+		out->query = git__strdup(in->query);
+		GIT_ERROR_CHECK_ALLOC(out->query);
+	}
+
+	return 0;
+}
+
+int git_net_url_joinpath(
+	git_net_url *out,
+	git_net_url *one,
+	const char *two)
+{
+	git_buf path = GIT_BUF_INIT;
+	const char *query;
+	size_t one_len, two_len;
+
+	if ((query = strchr(two, '?')) != NULL) {
+		two_len = query - two;
+
+		if (*(++query) != '\0') {
+			out->query = git__strdup(query);
+			GIT_ERROR_CHECK_ALLOC(out->query);
+		}
+	} else {
+		two_len = strlen(two);
+	}
+
+	/* Strip all trailing `/`s from the first path */
+	one_len = one->path ? strlen(one->path) : 0;
+	while (one_len && one->path[one_len - 1] == '/')
+		one_len--;
+
+	/* Strip all leading `/`s from the second path */
+	while (*two == '/') {
+		two++;
+		two_len--;
+	}
+
+	git_buf_put(&path, one->path, one_len);
+	git_buf_putc(&path, '/');
+	git_buf_put(&path, two, two_len);
+
+	if (git_buf_oom(&path))
+		return -1;
+
+	out->path = git_buf_detach(&path);
+
+	return dup_common(out, one);
+}
+
 int git_net_url_apply_redirect(
 	git_net_url *url,
 	const char *redirect_location,
