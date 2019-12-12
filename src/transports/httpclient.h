@@ -43,10 +43,6 @@ typedef struct {
 	char *content_type;
 	size_t content_length;
 	char *location;
-
-	/* Authentication headers */
-	git_vector auth_challenges;
-	git_vector proxy_auth_challenges;
 } git_http_response;
 
 typedef struct {
