@@ -24,13 +24,6 @@
 typedef struct {
 	git_net_url url;
 	git_stream *stream;
-
-	git_http_auth_context *auth_context;
-
-	git_http_authtype_t prior_authtype;
-
-	unsigned url_cred_presented : 1,
-	         authenticated : 1;
 } git_http_server;
 
 typedef enum {
@@ -442,42 +435,6 @@ static int stream_connect(
 	return error;
 }
 
-static void free_auth_context(git_http_server *server)
-{
-	if (!server->auth_context)
-		return;
-
-	if (server->auth_context->free)
-		server->auth_context->free(server->auth_context);
-
-	server->auth_context = NULL;
-}
-
-static void reset_auth_connection(git_http_server *server)
-{
-	/*
-	 * If we've authenticated and we're doing "normal"
-	 * authentication with a request affinity (Basic, Digest)
-	 * then we want to _keep_ our context, since authentication
-	 * survives even through non-keep-alive connections.  If
-	 * we've authenticated and we're doing connection-based
-	 * authentication (NTLM, Negotiate) - indicated by the presence
-	 * of an `is_complete` callback - then we need to restart
-	 * authentication on a new connection.
-	 */
-
-	if (server->authenticated &&
-	    server->auth_context &&
-	    server->auth_context->connection_affinity) {
-		server->prior_authtype = server->auth_context->type;
-
-		free_auth_context(server);
-
-		server->url_cred_presented = 0;
-		server->authenticated = 0;
-	}
-}
-
 GIT_INLINE(int) server_setup_from_url(
 	git_http_server *server,
 	git_net_url *url)
@@ -556,9 +513,6 @@ static int http_client_connect(git_http_client *client)
 		git_stream_free(client->proxy.stream);
 		client->proxy.stream = NULL;
 	}
-
-	reset_auth_connection(&client->server);
-	reset_auth_connection(&client->proxy);
 
 	reset_parser(client);
 
@@ -945,13 +899,6 @@ GIT_INLINE(void) http_server_close(git_http_server *server)
 	}
 
 	git_net_url_dispose(&server->url);
-
-	free_auth_context(server);
-
-	server->prior_authtype = 0;
-
-	server->url_cred_presented = 0;
-	server->authenticated = 0;
 }
 
 static void http_client_close(git_http_client *client)
