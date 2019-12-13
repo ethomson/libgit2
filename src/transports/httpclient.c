@@ -92,9 +92,6 @@ struct git_http_client {
 	/* A subset of information from the request */
 	size_t request_body_len,
 	       request_body_remain;
-
-	/* Response */
-	git_http_response response;
 };
 
 bool git_http_response_is_redirect(git_http_response *response)
