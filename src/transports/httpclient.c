@@ -109,8 +109,6 @@ void git_http_response_dispose(git_http_response *response)
 
 	git__free(response->content_type);
 	git__free(response->location);
-	git_vector_free_deep(&response->auth_challenges);
-	git_vector_free_deep(&response->proxy_auth_challenges);
 
 	memset(response, 0, sizeof(git_http_response));
 }
@@ -150,19 +148,6 @@ static int on_header_complete(http_parser *parser)
 		}
 
 		response->content_length = (size_t)len;
-	} else if (!strcasecmp("Proxy-Authenticate", git_buf_cstr(name))) {
-		char *dup = git__strndup(value->ptr, value->size);
-		GIT_ERROR_CHECK_ALLOC(dup);
-
-		if (git_vector_insert(&response->proxy_auth_challenges,
-		                      dup) < 0)
-			return -1;
-	} else if (!strcasecmp("WWW-Authenticate", name->ptr)) {
-		char *dup = git__strndup(value->ptr, value->size);
-		GIT_ERROR_CHECK_ALLOC(dup);
-
-		if (git_vector_insert(&response->auth_challenges, dup) < 0)
-			return -1;
 	} else if (!strcasecmp("Location", name->ptr)) {
 		if (response->location) {
 			git_error_set(GIT_ERROR_NET,
@@ -313,7 +298,7 @@ const char *name_for_method(git_http_method method)
 	return NULL;
 }
 
-static git_buf *generate_request(
+static int generate_request(
 	git_http_client *client,
 	git_http_request *request)
 {
@@ -375,9 +360,9 @@ static git_buf *generate_request(
 	git_buf_puts(buf, "\r\n");
 
 	if (git_buf_oom(buf))
-		return NULL;
+		return -1;
 
-	return buf;
+	return 0;
 }
 
 static int check_certificate(
@@ -566,7 +551,6 @@ int git_http_client_send_request(
 	git_http_client *client,
 	git_http_request *request)
 {
-	git_buf *msg;
 	int error = -1;
 
 	assert(client && request);
@@ -583,10 +567,12 @@ int git_http_client_send_request(
 		git_buf_dispose(&url);
 	}
 
-	if ((msg = generate_request(client, request)) == NULL ||
-	    (error = http_client_setup_hosts(client, request)) < 0 ||
+	if ((error = http_client_setup_hosts(client, request)) < 0 ||
 	    (error = http_client_connect(client)) < 0 ||
-	    (error = stream_write(&client->server, msg->ptr, msg->size)) < 0)
+	    (error = generate_request(client, request)) < 0 ||
+	    (error = stream_write(&client->server,
+	                          client->request_msg.ptr,
+	                          client->request_msg.size)) < 0)
 		goto done;
 
 	if (request->content_length || request->chunked) {
