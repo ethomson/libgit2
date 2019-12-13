@@ -257,6 +257,12 @@ static int on_body(http_parser *parser, const char *buf, size_t len)
 	http_parser_context *ctx = (http_parser_context *) parser->data;
 	int max_len;
 
+	/* Saw data when we expected not to (eg, in consume_response_body) */
+	if (ctx->output_buf == NULL && ctx->output_size == 0) {
+		ctx->parse_status = PARSE_STATUS_NO_OUTPUT;
+		return 0;
+	}
+
 	assert(ctx->output_size >= ctx->output_written);
 
 	max_len = min(ctx->output_size - ctx->output_written, len);
@@ -552,6 +558,161 @@ on_error:
 	return error;
 }
 
+GIT_INLINE(int) client_read(git_http_client *client)
+{
+	char *buf = client->read_buf.ptr + client->read_buf.size;
+	size_t max_len;
+	ssize_t read_len;
+
+	/*
+	 * We use a git_buf for convenience, but statically allocate it and
+	 * don't resize.
+	 */
+	max_len = client->read_buf.asize - client->read_buf.size;
+	max_len = min(max_len, INT_MAX);
+
+	if (max_len == 0) {
+		git_error_set(GIT_ERROR_NET, "no room in output buffer");
+		return -1;
+	}
+
+	read_len = git_stream_read(client->server.stream, buf, max_len);
+
+	if (read_len >= 0) {
+		client->read_buf.size += read_len;
+
+		git_trace(GIT_TRACE_TRACE, "Received:\n%.*s",
+		          (int)read_len, buf);
+	}
+
+	return (int)read_len;
+}
+
+static bool parser_settings_initialized;
+static http_parser_settings parser_settings;
+
+GIT_INLINE(http_parser_settings *) http_client_parser_settings(void)
+{
+	if (! parser_settings_initialized) {
+		parser_settings.on_header_field = on_header_field;
+		parser_settings.on_header_value = on_header_value;
+		parser_settings.on_headers_complete = on_headers_complete;
+		parser_settings.on_body = on_body;
+		parser_settings.on_message_complete = on_message_complete;
+
+		parser_settings_initialized = true;
+	}
+
+	return &parser_settings;
+}
+
+
+GIT_INLINE(int) client_read_and_parse(git_http_client *client)
+{
+	http_parser *parser = &client->parser;
+	http_parser_context *ctx = (http_parser_context *) parser->data;
+	unsigned char http_errno;
+	size_t read_len, parsed_len;
+
+	/*
+	 * If we have data in our read buffer, that means we stopped early
+	 * when parsing headers.  Use the data in the read buffer instead of
+	 * reading more from the socket.
+	 */
+	if (!client->read_buf.size && (read_len = client_read(client)) < 0)
+		return read_len;
+
+	parsed_len = http_parser_execute(parser,
+		http_client_parser_settings(),
+		client->read_buf.ptr,
+		client->read_buf.size);
+	http_errno = client->parser.http_errno;
+
+	if (parser->upgrade) {
+		git_error_set(GIT_ERROR_NET, "server requested upgrade");
+		return -1;
+	}
+
+	if (ctx->parse_status == PARSE_STATUS_ERROR) {
+		client->connected = 0;
+		return ctx->error ? ctx->error : -1;
+	}
+
+	/*
+	 * If we finished reading the headers or body, we paused parsing.
+	 * Otherwise the parser will start filling the body, or even parse
+	 * a new response if the server pipelined us multiple responses.
+	 * (This can happen in response to an expect/continue request,
+	 * where the server gives you a 100 and 200 simultaneously.)
+	 */
+	if (http_errno == HPE_PAUSED) {
+		/*
+		 * http-parser has a "feature" where it will not deliver the
+		 * final byte when paused in a callback.  Consume that byte.
+		 * https://github.com/nodejs/http-parser/issues/97
+		 */
+		assert(client->read_buf.size > parsed_len);
+
+		http_parser_pause(parser, 0);
+
+		parsed_len += http_parser_execute(parser,
+			http_client_parser_settings(),
+			client->read_buf.ptr + parsed_len,
+			1);
+	}
+
+	/* Most failures will be reported in http_errno */
+	else if (parser->http_errno != HPE_OK) {
+		git_error_set(GIT_ERROR_NET, "http parser error: %s",
+		              http_errno_description(http_errno));
+		return -1;
+	}
+
+	/* Otherwise we should have consumed the entire buffer. */
+	else if (parsed_len != client->read_buf.size) {
+		git_error_set(GIT_ERROR_NET,
+		              "http parser did not consume entire buffer: %s",
+			      http_errno_description(http_errno));
+		return -1;
+	}
+
+	git_buf_consume_by(&client->read_buf, parsed_len);
+
+	return parsed_len;
+}
+
+/*
+ * See if we've consumed the entire response body.  If the client was
+ * reading the body but did not consume it entirely, it's possible that
+ * they knew that the stream had finished (in a git response, seeing a final
+ * flush) and stopped reading.  But if the response was chunked, we may have
+ * not consumed the final chunk marker.  Consume it to ensure that we don't
+ * have it waiting in our socket.  If there's more than just a chunk marker,
+ * close the connection.
+ */
+static void complete_response_body(git_http_client *client)
+{
+	http_parser_context parser_context = {0};
+
+	/* If we're not keeping alive, don't bother. */
+	if (!client->keepalive) {
+		client->connected = 0;
+		return;
+	}
+
+	parser_context.client = client;
+	client->parser.data = &parser_context;
+
+	/* If there was an error, just close the connection. */
+	if (client_read_and_parse(client) < 0 ||
+	    parser_context.error != HPE_OK ||
+	    (parser_context.parse_status != PARSE_STATUS_OK &&
+	     parser_context.parse_status != PARSE_STATUS_NO_OUTPUT)) {
+		git_error_clear();
+		client->connected = 0;
+	}
+}
+
 int git_http_client_send_request(
 	git_http_client *client,
 	git_http_request *request)
@@ -560,8 +721,11 @@ int git_http_client_send_request(
 
 	assert(client && request);
 
+	/* If the client did not finish reading, clean up the stream. */
+	if (client->state == READING_BODY)
+		complete_response_body(client);
+
 	http_parser_init(&client->parser, HTTP_RESPONSE);
-	git_buf_clear(&client->read_buf);
 
 	if (git_trace_level() >= GIT_TRACE_DEBUG) {
 		git_buf url = GIT_BUF_INIT;
@@ -643,128 +807,6 @@ static int complete_request(git_http_client *client)
 	}
 
 	return error;
-}
-
-static bool parser_settings_initialized;
-static http_parser_settings parser_settings;
-
-GIT_INLINE(http_parser_settings *) http_client_parser_settings(void)
-{
-	if (! parser_settings_initialized) {
-		parser_settings.on_header_field = on_header_field;
-		parser_settings.on_header_value = on_header_value;
-		parser_settings.on_headers_complete = on_headers_complete;
-		parser_settings.on_body = on_body;
-		parser_settings.on_message_complete = on_message_complete;
-
-		parser_settings_initialized = true;
-	}
-
-	return &parser_settings;
-}
-
-GIT_INLINE(int) client_read(git_http_client *client)
-{
-	char *buf = client->read_buf.ptr + client->read_buf.size;
-	size_t max_len;
-	ssize_t read_len;
-
-	/*
-	 * We use a git_buf for convenience, but statically allocate it and
-	 * don't resize.
-	 */
-	max_len = client->read_buf.asize - client->read_buf.size;
-	max_len = min(max_len, INT_MAX);
-
-	if (max_len == 0) {
-		git_error_set(GIT_ERROR_NET, "no room in output buffer");
-		return -1;
-	}
-
-	read_len = git_stream_read(client->server.stream, buf, max_len);
-
-	if (read_len >= 0) {
-		client->read_buf.size += read_len;
-
-		git_trace(GIT_TRACE_TRACE, "Received:\n%.*s",
-		          (int)read_len, buf);
-	}
-
-	return (int)read_len;
-}
-
-GIT_INLINE(int) client_read_and_parse(git_http_client *client)
-{
-	http_parser *parser = &client->parser;
-	http_parser_context *ctx = (http_parser_context *) parser->data;
-	unsigned char http_errno;
-	size_t read_len, parsed_len;
-
-	/*
-	 * If we have data in our read buffer, that means we stopped early
-	 * when parsing headers.  Use the data in the read buffer instead of
-	 * reading more from the socket.
-	 */
-	if (!client->read_buf.size && (read_len = client_read(client)) < 0)
-		return read_len;
-
-	parsed_len = http_parser_execute(parser,
-		http_client_parser_settings(),
-		client->read_buf.ptr,
-		client->read_buf.size);
-	http_errno = client->parser.http_errno;
-
-	if (parser->upgrade) {
-		git_error_set(GIT_ERROR_NET, "server requested upgrade");
-		return -1;
-	}
-
-	if (ctx->parse_status == PARSE_STATUS_ERROR) {
-		client->connected = 0;
-		return ctx->error ? ctx->error : -1;
-	}
-
-	/*
-	 * If we finished reading the headers or body, we paused parsing.
-	 * Otherwise the parser will start filling the body, or even parse
-	 * a new response if the server pipelined us multiple responses.
-	 * (This can happen in response to an expect/continue request,
-	 * where the server gives you a 100 and 200 simultaneously.)
-	 */
-	if (http_errno == HPE_PAUSED) {
-		/*
-		 * http-parser has a "feature" where it will not deliver the
-		 * final byte when paused in a callback.  Consume that byte.
-		 * https://github.com/nodejs/http-parser/issues/97
-		 */
-		assert(client->read_buf.size > parsed_len);
-
-		http_parser_pause(parser, 0);
-
-		parsed_len += http_parser_execute(parser,
-			http_client_parser_settings(),
-			client->read_buf.ptr + parsed_len,
-			1);
-	}
-
-	/* Most failures will be reported in http_errno */
-	else if (parser->http_errno != HPE_OK) {
-		git_error_set(GIT_ERROR_NET, "http parser error: %s",
-		              http_errno_description(http_errno));
-		return -1;
-	}
-
-	/* Otherwise we should have consumed the entire buffer. */
-	else if (parsed_len != client->read_buf.size) {
-		git_error_set(GIT_ERROR_NET,
-		              "http parser did not consume entire buffer: %s",
-			      http_errno_description(http_errno));
-		return -1;
-	}
-
-	git_buf_consume_by(&client->read_buf, parsed_len);
-
-	return parsed_len;
 }
 
 int git_http_client_read_response(
