@@ -243,6 +243,7 @@ static int on_headers_complete(http_parser *parser)
 	}
 
 	ctx->response->status = parser->status_code;
+	ctx->client->keepalive = http_should_keep_alive(parser);
 
 	/* Stop parsing. */
 	http_parser_pause(parser, 1);
