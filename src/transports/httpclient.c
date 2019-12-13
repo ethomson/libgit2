@@ -481,8 +481,12 @@ static int http_client_connect(git_http_client *client)
 	void *cb_payload;
 	int error;
 
-	if (client->connected && client->keepalive)
+	if (client->connected && client->keepalive &&
+	    (client->state == NONE || client->state == DONE))
 		return 0;
+
+	git_trace(GIT_TRACE_DEBUG, "Connecting to %s:%s",
+		client->server.url.host, client->server.url.port);
 
 	if (client->server.stream) {
 		git_stream_close(client->server.stream);
@@ -742,17 +746,18 @@ GIT_INLINE(int) client_read_and_parse(git_http_client *client)
 			1);
 	}
 
+	/* Most failures will be reported in http_errno */
+	else if (parser->http_errno != HPE_OK) {
+		git_error_set(GIT_ERROR_NET, "http parser error: %s",
+		              http_errno_description(http_errno));
+		return -1;
+	}
+
 	/* Otherwise we should have consumed the entire buffer. */
 	else if (parsed_len != client->read_buf.size) {
 		git_error_set(GIT_ERROR_NET,
 		              "http parser did not consume entire buffer: %s",
 			      http_errno_description(http_errno));
-		return -1;
-	}
-
-	if (parser->http_errno != HPE_OK) {
-		git_error_set(GIT_ERROR_NET, "http parser error: %s",
-		              http_errno_description(http_errno));
 		return -1;
 	}
 
