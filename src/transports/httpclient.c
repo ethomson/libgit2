@@ -13,17 +13,31 @@
 #include "global.h"
 #include "httpclient.h"
 #include "http.h"
+#include "auth.h"
+#include "auth_negotiate.h"
+#include "auth_ntlm.h"
+#include "git2/sys/cred.h"
 #include "net.h"
 #include "stream.h"
 #include "streams/socket.h"
 #include "streams/tls.h"
 #include "auth.h"
 
+
+static git_http_auth_scheme auth_schemes[] = {
+	{ GIT_AUTHTYPE_NEGOTIATE, "Negotiate", GIT_CREDTYPE_DEFAULT, git_http_auth_negotiate },
+	{ GIT_AUTHTYPE_NTLM, "NTLM", GIT_CREDTYPE_USERPASS_PLAINTEXT, git_http_auth_ntlm },
+	{ GIT_AUTHTYPE_BASIC, "Basic", GIT_CREDTYPE_USERPASS_PLAINTEXT, git_http_auth_basic },
+};
+
 #define GIT_READ_BUFFER_SIZE 8192
 
 typedef struct {
 	git_net_url url;
 	git_stream *stream;
+
+	git_vector auth_challenges;
+	git_http_auth_context *auth_context;
 } git_http_server;
 
 typedef enum {
@@ -45,6 +59,7 @@ typedef enum {
 
 typedef enum {
 	PARSE_STATUS_OK,
+	PARSE_STATUS_NO_OUTPUT,
 	PARSE_STATUS_ERROR
 } parse_status;
 
@@ -116,6 +131,7 @@ void git_http_response_dispose(git_http_response *response)
 static int on_header_complete(http_parser *parser)
 {
 	http_parser_context *ctx = (http_parser_context *) parser->data;
+	git_http_client *client = ctx->client;
 	git_http_response *response = ctx->response;
 
 	git_buf *name = &ctx->parse_header_name;
@@ -148,6 +164,18 @@ static int on_header_complete(http_parser *parser)
 		}
 
 		response->content_length = (size_t)len;
+	} else if (!strcasecmp("Proxy-Authenticate", git_buf_cstr(name))) {
+		char *dup = git__strndup(value->ptr, value->size);
+		GIT_ERROR_CHECK_ALLOC(dup);
+
+		if (git_vector_insert(&client->proxy.auth_challenges, dup) < 0)
+			return -1;
+	} else if (!strcasecmp("WWW-Authenticate", name->ptr)) {
+		char *dup = git__strndup(value->ptr, value->size);
+		GIT_ERROR_CHECK_ALLOC(dup);
+
+		if (git_vector_insert(&client->server.auth_challenges, dup) < 0)
+			return -1;
 	} else if (!strcasecmp("Location", name->ptr)) {
 		if (response->location) {
 			git_error_set(GIT_ERROR_NET,
@@ -220,6 +248,64 @@ static int on_header_value(http_parser *parser, const char *str, size_t len)
 	return 0;
 }
 
+GIT_INLINE(bool) challenge_matches_scheme(
+	const char *challenge,
+	git_http_auth_scheme *scheme)
+{
+	const char *scheme_name = scheme->name;
+	size_t scheme_len = strlen(scheme_name);
+
+	if (!strncasecmp(challenge, scheme_name, scheme_len) &&
+	    (challenge[scheme_len] == '\0' || challenge[scheme_len] == ' '))
+		return true;
+
+	return false;
+}
+
+static git_http_auth_scheme *scheme_for_challenge(const char *challenge)
+{
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(auth_schemes); i++) {
+		if (challenge_matches_scheme(challenge, &auth_schemes[i]))
+			return &auth_schemes[i];
+	}
+
+	return NULL;
+}
+
+GIT_INLINE(unsigned int) collect_credtypes(git_vector *challenges)
+{
+	git_http_auth_scheme *scheme;
+	const char *challenge;
+	unsigned int credtypes = 0;
+	size_t i;
+
+	git_vector_foreach(challenges, i, challenge) {
+		if ((scheme = scheme_for_challenge(challenge)) != NULL)
+			credtypes |= scheme->credtypes;
+	}
+
+	return credtypes;
+}
+
+static int resend_needed(git_http_client *client)
+{
+	git_http_auth_context *auth_context;
+
+	if ((auth_context = client->server.auth_context) &&
+	    auth_context->is_complete &&
+	    !auth_context->is_complete(auth_context))
+		return 1;
+
+	if ((auth_context = client->proxy.auth_context) &&
+	    auth_context->is_complete &&
+	    !auth_context->is_complete(auth_context))
+		return 1;
+
+	return 0;
+}
+
 static int on_headers_complete(http_parser *parser)
 {
 	http_parser_context *ctx = (http_parser_context *) parser->data;
@@ -244,6 +330,14 @@ static int on_headers_complete(http_parser *parser)
 
 	ctx->response->status = parser->status_code;
 	ctx->client->keepalive = http_should_keep_alive(parser);
+
+	/* Prepare for authentication */
+	ctx->response->server_credtypes =
+		collect_credtypes(&ctx->client->server.auth_challenges);
+	ctx->response->proxy_credtypes =
+		collect_credtypes(&ctx->client->proxy.auth_challenges);
+
+	ctx->response->resend_credentials = resend_needed(ctx->client);
 
 	/* Stop parsing. */
 	http_parser_pause(parser, 1);
@@ -305,6 +399,163 @@ const char *name_for_method(git_http_method method)
 	return NULL;
 }
 
+/*
+ * Find the scheme that is suitable for the given credentials, based on the
+ * server's auth challenges.
+ */
+static bool best_scheme_and_challenge(
+	git_http_auth_scheme **scheme_out,
+	const char **challenge_out,
+	git_vector *challenges,
+	git_cred *credentials)
+{
+	const char *challenge;
+	size_t i, j;
+
+	for (i = 0; i < ARRAY_SIZE(auth_schemes); i++) {
+		git_vector_foreach(challenges, j, challenge) {
+			git_http_auth_scheme *scheme = &auth_schemes[i];
+
+			if (challenge_matches_scheme(challenge, scheme) &&
+			    !!(scheme->credtypes & credentials->credtype)) {
+				*scheme_out = scheme;
+				*challenge_out = challenge;
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+/*
+ * Find the challenge from the server for our current auth context.
+ */
+static const char *challenge_for_context(
+	git_vector *challenges,
+	git_http_auth_context *auth_ctx)
+{
+	const char *challenge;
+	size_t i, j;
+
+	for (i = 0; i < ARRAY_SIZE(auth_schemes); i++) {
+		if (auth_schemes[i].type == auth_ctx->type) {
+			git_http_auth_scheme *scheme = &auth_schemes[i];
+
+			git_vector_foreach(challenges, j, challenge) {
+				if (challenge_matches_scheme(challenge, scheme))
+					return challenge;
+			}
+		}
+	}
+
+	return NULL;
+}
+
+static const char *init_auth_context(
+	git_http_server *server,
+	git_vector *challenges,
+	git_cred *credentials)
+{
+	git_http_auth_scheme *scheme;
+	const char *challenge;
+	int error;
+
+	if (!best_scheme_and_challenge(&scheme, &challenge, challenges, credentials)) {
+		git_error_set(GIT_ERROR_NET, "could not find appropriate mechanism for credentials");
+		return NULL;
+	}
+
+	error = scheme->init_context(&server->auth_context, &server->url);
+
+	if (error == GIT_PASSTHROUGH) {
+		git_error_set(GIT_ERROR_NET, "mechanism declined to authenticate");
+		return NULL;
+	}
+
+	return challenge;
+}
+
+static void free_auth_context(git_http_server *server)
+{
+	if (!server->auth_context)
+		return;
+
+	if (server->auth_context->free)
+		server->auth_context->free(server->auth_context);
+
+	server->auth_context = NULL;
+}
+
+static int apply_credentials(
+	git_buf *buf,
+	git_http_server *server,
+	git_vector *challenges,
+	const char *header_name,
+	git_cred *credentials)
+{
+	git_http_auth_context *auth = server->auth_context;
+	const char *challenge;
+	git_buf token = GIT_BUF_INIT;
+	int error = 0;
+
+	/* We haven't authenticated, nor were we asked to.  Nothing to do. */
+	if (!auth && !git_vector_length(challenges))
+		return 0;
+
+	if (!credentials) {
+		git_error_set(GIT_ERROR_NET, "no credentials for authentication");
+		error = -1;
+		goto done;
+	}
+
+	if (!auth) {
+		challenge = init_auth_context(server, challenges, credentials);
+		auth = server->auth_context;
+
+		if (!challenge || !auth) {
+			error = -1;
+			goto done;
+		}
+	} else if (auth->set_challenge) {
+		challenge = challenge_for_context(challenges, auth);
+	}
+
+	if (auth->set_challenge && challenge &&
+	    (error = auth->set_challenge(auth, challenge)) < 0)
+		goto done;
+
+	if ((error = auth->next_token(&token, auth, credentials)) < 0)
+		goto done;
+
+	error = git_buf_printf(buf, "%s: %s\r\n", header_name, token.ptr);
+
+	/*
+	 * If we're done with an auth mechanism with connection affinity,
+	 * we don't need to send any more headers and can dispose the context.
+	 */
+	if (auth->is_complete &&
+	    auth->is_complete(auth) &&
+	    auth->connection_affinity)
+		free_auth_context(server);
+
+done:
+	git_buf_dispose(&token);
+	return error;
+}
+
+GIT_INLINE(int) apply_server_credentials(
+	git_buf *buf,
+	git_http_client *client,
+	git_http_request *request)
+{
+	return apply_credentials(buf,
+	                         &client->server,
+	                         &client->server.auth_challenges,
+	                         "Authorization",
+	                         request->credentials);
+}
+
 static int generate_request(
 	git_http_client *client,
 	git_http_request *request)
@@ -312,6 +563,7 @@ static int generate_request(
 	const char *method, *path, *sep, *query;
 	git_buf *buf;
 	size_t i;
+	int error;
 
 	assert(client && request);
 
@@ -354,6 +606,9 @@ static int generate_request(
 
 	if (request->expect_continue)
 		git_buf_printf(buf, "Expect: 100-continue\r\n");
+
+	if ((error = apply_server_credentials(buf, client, request)) < 0)
+		return error;
 
 	if (request->custom_headers) {
 		for (i = 0; i < request->custom_headers->count; i++) {
@@ -422,6 +677,24 @@ static int stream_connect(
 		                          cert_cb, cb_payload);
 
 	return error;
+}
+
+static void reset_auth_connection(git_http_server *server)
+{
+	/*
+	 * If we've authenticated and we're doing "normal"
+	 * authentication with a request affinity (Basic, Digest)
+	 * then we want to _keep_ our context, since authentication
+	 * survives even through non-keep-alive connections.  If
+	 * we've authenticated and we're doing connection-based
+	 * authentication (NTLM, Negotiate) - indicated by the presence
+	 * of an `is_complete` callback - then we need to restart
+	 * authentication on a new connection.
+	 */
+
+	if (server->auth_context &&
+	    server->auth_context->connection_affinity)
+		free_auth_context(server);
 }
 
 GIT_INLINE(int) server_setup_from_url(
@@ -506,6 +779,9 @@ static int http_client_connect(git_http_client *client)
 		git_stream_free(client->proxy.stream);
 		client->proxy.stream = NULL;
 	}
+
+	reset_auth_connection(&client->server);
+	reset_auth_connection(&client->proxy);
 
 	reset_parser(client);
 
@@ -605,7 +881,6 @@ GIT_INLINE(http_parser_settings *) http_client_parser_settings(void)
 
 	return &parser_settings;
 }
-
 
 GIT_INLINE(int) client_read_and_parse(git_http_client *client)
 {
@@ -726,6 +1001,7 @@ int git_http_client_send_request(
 		complete_response_body(client);
 
 	http_parser_init(&client->parser, HTTP_RESPONSE);
+	git_buf_clear(&client->read_buf);
 
 	if (git_trace_level() >= GIT_TRACE_DEBUG) {
 		git_buf url = GIT_BUF_INIT;
@@ -827,6 +1103,11 @@ int git_http_client_read_response(
 		goto done;
 	}
 
+	git_http_response_dispose(response);
+
+	git_vector_free_deep(&client->server.auth_challenges);
+	git_vector_free_deep(&client->proxy.auth_challenges);
+
 	client->state = READING_RESPONSE;
 	client->parser.data = &parser_context;
 
@@ -896,6 +1177,39 @@ done:
 	return error;
 }
 
+int git_http_client_skip_body(git_http_client *client)
+{
+	http_parser_context parser_context = {0};
+	int error;
+
+	if (client->state == DONE)
+		return 0;
+
+	if (client->state != READING_BODY) {
+		git_error_set(GIT_ERROR_NET, "client is in invalid state");
+		return -1;
+	}
+
+	parser_context.client = client;
+	client->parser.data = &parser_context;
+
+	do {
+		error = client_read_and_parse(client);
+
+		if (parser_context.error != HPE_OK ||
+		    parser_context.parse_status != PARSE_STATUS_NO_OUTPUT) {
+			git_error_set(GIT_ERROR_NET,
+			              "unexpected data handled in callback");
+			error = -1;
+		}
+	} while (!error);
+
+	if (error < 0)
+		client->connected = 0;
+
+	return error;
+}
+
 /*
  * Create an http_client capable of communicating with the given remote
  * host.
@@ -930,6 +1244,9 @@ GIT_INLINE(void) http_server_close(git_http_server *server)
 	}
 
 	git_net_url_dispose(&server->url);
+
+	git_vector_free_deep(&server->auth_challenges);
+	free_auth_context(server);
 }
 
 static void http_client_close(git_http_client *client)
