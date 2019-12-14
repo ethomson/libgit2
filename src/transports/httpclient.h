@@ -29,6 +29,7 @@ typedef struct {
 	const char *accept;           /**< Contents of the Accept header */
 	const char *content_type;     /**< Content-Type header (for POST) */
 	git_cred *credentials;        /**< Credentials to authenticate with */
+	git_cred *proxy_credentials;  /**< Credentials for proxy */
 	git_strarray *custom_headers; /**< Additional headers to deliver */
 
 	/* To POST a payload, either set content_length OR set chunked. */

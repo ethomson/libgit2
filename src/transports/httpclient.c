@@ -490,11 +490,11 @@ static void free_auth_context(git_http_server *server)
 static int apply_credentials(
 	git_buf *buf,
 	git_http_server *server,
-	git_vector *challenges,
 	const char *header_name,
 	git_cred *credentials)
 {
 	git_http_auth_context *auth = server->auth_context;
+	git_vector *challenges = &server->auth_challenges;
 	const char *challenge;
 	git_buf token = GIT_BUF_INIT;
 	int error = 0;
@@ -551,16 +551,25 @@ GIT_INLINE(int) apply_server_credentials(
 {
 	return apply_credentials(buf,
 	                         &client->server,
-	                         &client->server.auth_challenges,
 	                         "Authorization",
 	                         request->credentials);
+}
+
+GIT_INLINE(int) apply_proxy_credentials(
+	git_buf *buf,
+	git_http_client *client,
+	git_http_request *request)
+{
+	return apply_credentials(buf,
+	                         &client->proxy,
+	                         "Proxy-Authorization",
+	                         request->proxy_credentials);
 }
 
 static int generate_request(
 	git_http_client *client,
 	git_http_request *request)
 {
-	const char *method, *path, *sep, *query;
 	git_buf *buf;
 	size_t i;
 	int error;
@@ -570,13 +579,16 @@ static int generate_request(
 	git_buf_clear(&client->request_msg);
 	buf = &client->request_msg;
 
-	method = name_for_method(request->method);
-	path = request->url->path ? request->url->path : "/";
-	sep = request->url->query ? "?" : "";
-	query = request->url->query ? request->url->query : "";
+	/* GET|POST path HTTP/1.1 */
+	git_buf_puts(buf, name_for_method(request->method));
+	git_buf_putc(buf, ' ');
 
-	git_buf_printf(buf, "%s %s%s%s HTTP/1.1\r\n",
-		method, path, sep, query);
+	if (request->proxy && strcmp(request->url->scheme, "https"))
+		git_net_url_fmt(buf, request->url);
+	else
+		git_net_url_fmt_path(buf, request->url);
+
+	git_buf_puts(buf, " HTTP/1.1\r\n");
 
 	git_buf_puts(buf, "User-Agent: ");
 	git_http__user_agent(buf);
@@ -607,7 +619,8 @@ static int generate_request(
 	if (request->expect_continue)
 		git_buf_printf(buf, "Expect: 100-continue\r\n");
 
-	if ((error = apply_server_credentials(buf, client, request)) < 0)
+	if ((error = apply_server_credentials(buf, client, request)) < 0 ||
+	    (error = apply_proxy_credentials(buf, client, request)) < 0)
 		return error;
 
 	if (request->custom_headers) {
