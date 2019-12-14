@@ -259,8 +259,8 @@ static int on_body(http_parser *parser, const char *buf, size_t len)
 
 	/* Saw data when we expected not to (eg, in consume_response_body) */
 	if (ctx->output_buf == NULL && ctx->output_size == 0) {
-		git_error_set(GIT_ERROR_NET, "invalid configuration");
-		return ctx->parse_status = PARSE_STATUS_ERROR;
+		ctx->parse_status = PARSE_STATUS_NO_OUTPUT;
+		return 0;
 	}
 
 	assert(ctx->output_size >= ctx->output_written);
@@ -704,7 +704,10 @@ static void complete_response_body(git_http_client *client)
 	client->parser.data = &parser_context;
 
 	/* If there was an error, just close the connection. */
-	if (client_read_and_parse(client) < 0) {
+	if (client_read_and_parse(client) < 0 ||
+	    parser_context.error != HPE_OK ||
+	    (parser_context.parse_status != PARSE_STATUS_OK &&
+	     parser_context.parse_status != PARSE_STATUS_NO_OUTPUT)) {
 		git_error_clear();
 		client->connected = 0;
 	}
