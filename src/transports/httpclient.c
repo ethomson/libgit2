@@ -98,6 +98,7 @@ struct git_http_client {
 
 	unsigned request_count;
 	unsigned connected : 1,
+	         proxy_connected : 1,
 	         keepalive : 1,
 	         request_chunked : 1;
 
@@ -782,6 +783,7 @@ GIT_INLINE(int) server_setup_from_url(
 
 static void reset_parser(git_http_client *client)
 {
+	http_parser_init(&client->parser, HTTP_RESPONSE);
 	git_buf_clear(&client->read_buf);
 }
 
@@ -798,10 +800,6 @@ static int setup_hosts(
 
 	diff |= ret;
 
-	/*
-	 * TODO: we could upgrade a non-CONNECT proxy connection to a CONNECT
-	 * without actually closing our socket and reconnecting.
-	 */
 	if (request->proxy &&
 	    (ret = server_setup_from_url(&client->proxy, request->proxy)) < 0)
 		return ret;
@@ -838,23 +836,27 @@ static int proxy_connect(
 	git_http_response response = {0};
 	int error;
 
-	/* If the client did not finish reading, clean up the stream. */
-	if (client->state == READING_BODY)
-		;
+	if (!client->proxy_connected || !client->keepalive) {
+		git_trace(GIT_TRACE_DEBUG, "Connecting to proxy %s:%s",
+			  client->proxy.url.host, client->proxy.url.port);
 
-	if ((error = stream_for_url(&stream, &client->proxy.url)) < 0 ||
-	    (error = stream_connect(stream, &client->proxy.url,
-		client->opts.proxy_certificate_check_cb,
-		client->opts.proxy_certificate_check_payload)) < 0 ||
-	    (error = generate_connect_request(client, request)) < 0 ||
+		if ((error = stream_for_url(&stream, &client->proxy.url)) < 0 ||
+		    (error = stream_connect(stream, &client->proxy.url,
+			client->opts.proxy_certificate_check_cb,
+			client->opts.proxy_certificate_check_payload)) < 0)
+			goto done;
+
+		client->proxy_connected = 1;
+	} else {
+		stream = client->proxy.stream;
+	}
+	
+	if ((error = generate_connect_request(client, request)) < 0 ||
 	    (error = stream_write(stream, client->request_msg.ptr, client->request_msg.size)) < 0)
 		goto done;
 
 	client->state = SENT_REQUEST;
 	client->server.stream = stream;
-
-	http_parser_init(&client->parser, HTTP_RESPONSE);
-	git_buf_clear(&client->read_buf);
 
 	if ((error = git_http_client_read_response(&response, client)) < 0 ||
 	    (error = git_http_client_skip_body(client)) < 0)
@@ -869,7 +871,9 @@ static int proxy_connect(
 		memcpy(&client->response, &response, sizeof(response));
 		memset(&response, 0, sizeof(response));
 
+		*out = stream;
 		error = GIT_RETRY;
+
 		goto done;
 	} else if (response.status != 200) {
 		git_error_set(GIT_ERROR_NET, "proxy returned unexpected status: %d", response.status);
@@ -877,10 +881,19 @@ static int proxy_connect(
 		goto done;
 	}
 
+	reset_parser(client);
 	client->state = NONE;
+
 	*out = stream;
 
 done:
+	client->server.stream = NULL;
+
+	if (error && error != GIT_RETRY && stream) {
+		git_stream_close(stream);
+		git_stream_free(stream);
+	}
+
 	git_http_response_dispose(&response);
 	return error;
 }
@@ -906,18 +919,12 @@ static int server_connect(
 	                      client->opts.server_certificate_check_payload);
 }
 
-GIT_INLINE(void) close_streams(git_http_client *client)
+GIT_INLINE(void) close_stream(git_http_server *server)
 {
-	if (client->server.stream) {
-		git_stream_close(client->server.stream);
-		git_stream_free(client->server.stream);
-		client->server.stream = NULL;
-	}
-
-	if (client->proxy.stream) {
-		git_stream_close(client->proxy.stream);
-		git_stream_free(client->proxy.stream);
-		client->proxy.stream = NULL;
+	if (server->stream) {
+		git_stream_close(server->stream);
+		git_stream_free(server->stream);
+		server->stream = NULL;
 	}
 }
 
@@ -932,46 +939,57 @@ static int http_client_connect(
 	if ((error = setup_hosts(client, request)) < 0)
 		goto on_error;
 
+	/* We're connected to our destination server; no need to reconnect */
 	if (client->connected && client->keepalive &&
 	    (client->state == NONE || client->state == DONE))
 		return 0;
 
-	git_trace(GIT_TRACE_DEBUG, "Connecting to %s%s%s%s%s:%s",
-		  client->proxy.url.host ? client->proxy.url.host : "",
-	          client->proxy.url.port ? ":" : "",
-	          client->proxy.url.port ? client->proxy.url.port : "",
-	          client->proxy.url.host ? " for " : "",
-	          client->server.url.host, client->server.url.port);
+	client->connected = 0;
+	client->request_count = 0;
 
-	close_streams(client);
-
+	close_stream(&client->server);
 	reset_auth_connection(&client->server);
-	reset_auth_connection(&client->proxy);
 
 	reset_parser(client);
 
-	client->connected = 0;
-	client->keepalive = 0;
-	client->request_count = 0;
-
+	/* Reconnect to the proxy if necessary. */
 	use_proxy = client->proxy.url.host &&
 	            !strcmp(client->server.url.scheme, "https");
 
-	if (use_proxy &&
-	    (error = proxy_connect(&proxy_stream, client, request)) < 0)
-		goto on_error;
+	if (use_proxy) {
+		if (!client->proxy_connected || !client->keepalive ||
+		    (client->state != NONE && client->state != DONE)) {
+			close_stream(&client->proxy);
+			reset_auth_connection(&client->proxy);
+
+			client->proxy_connected = 0;
+		}
+
+		error = proxy_connect(&proxy_stream, client, request);
+
+		if (!error || error == GIT_RETRY)
+			client->proxy.stream = proxy_stream;
+
+		if (error < 0)
+			goto on_error;
+	}
+
+	git_trace(GIT_TRACE_DEBUG, "Connecting to remote %s:%s",
+	          client->server.url.host, client->server.url.port);
 
 	if ((error = server_connect(&stream, client, proxy_stream)) < 0)
 		goto on_error;
 
 	client->server.stream = stream;
-	client->proxy.stream = proxy_stream;
 
 	client->connected = 1;
 	return error;
 
 on_error:
-	close_streams(client);
+	if (error != GIT_RETRY)
+		close_stream(&client->proxy);
+
+	close_stream(&client->server);
 	return error;
 }
 
@@ -1170,8 +1188,7 @@ int git_http_client_send_request(
 		client->state = SENT_REQUEST;
 	}
 
-	http_parser_init(&client->parser, HTTP_RESPONSE);
-	git_buf_clear(&client->read_buf);
+	reset_parser(client);
 
 done:
 	if (error == GIT_RETRY)
@@ -1275,6 +1292,7 @@ int git_http_client_read_response(
 	git_vector_free_deep(&client->proxy.auth_challenges);
 
 	client->state = READING_RESPONSE;
+	client->keepalive = 0;
 	client->parser.data = &parser_context;
 
 	parser_context.client = client;
