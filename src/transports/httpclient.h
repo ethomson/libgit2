@@ -16,7 +16,8 @@ typedef struct git_http_client git_http_client;
 /** Method for the HTTP request */
 typedef enum {
 	GIT_HTTP_METHOD_GET,
-	GIT_HTTP_METHOD_POST
+	GIT_HTTP_METHOD_POST,
+	GIT_HTTP_METHOD_CONNECT
 } git_http_method;
 
 /** An HTTP request */
@@ -47,10 +48,11 @@ typedef struct {
 	char *location;
 
 	/* Authentication headers */
-	unsigned server_credtypes;   /**< Supported cred types for remote */
-	unsigned proxy_credtypes;    /**< Supported cred types for proxy */
+	unsigned server_credtypes;       /**< Supported cred types for remote */
+	unsigned proxy_credtypes;        /**< Supported cred types for proxy */
 
-	unsigned resend_credentials; /**< Resend request for authentication */
+	unsigned chunked : 1,            /**< Response body is chunked */
+	         resend_credentials : 1; /**< Resend request for authentication */
 } git_http_response;
 
 typedef struct {

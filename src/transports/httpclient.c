@@ -42,6 +42,7 @@ typedef struct {
 
 typedef enum {
 	NONE = 0,
+	PROXY_AUTH,
 	SENDING_BODY,
 	SENT_REQUEST,
 	READING_RESPONSE,
@@ -107,6 +108,12 @@ struct git_http_client {
 	/* A subset of information from the request */
 	size_t request_body_len,
 	       request_body_remain;
+
+	/*
+	 * When saved_response = 1, the response of our proxy that we
+	 * have buffered and will deliver during read_response.
+	 */
+	git_http_response response;
 };
 
 bool git_http_response_is_redirect(git_http_response *response)
@@ -164,6 +171,9 @@ static int on_header_complete(http_parser *parser)
 		}
 
 		response->content_length = (size_t)len;
+	} else if (!strcasecmp("Transfer-Encoding", name->ptr) &&
+	           !strcasecmp("chunked", value->ptr)) {
+			ctx->response->chunked = 1;
 	} else if (!strcasecmp("Proxy-Authenticate", git_buf_cstr(name))) {
 		char *dup = git__strndup(value->ptr, value->size);
 		GIT_ERROR_CHECK_ALLOC(dup);
@@ -342,7 +352,11 @@ static int on_headers_complete(http_parser *parser)
 	/* Stop parsing. */
 	http_parser_pause(parser, 1);
 
-	ctx->client->state = READING_BODY;
+	if (ctx->response->content_type || ctx->response->chunked)
+		ctx->client->state = READING_BODY;
+	else
+		ctx->client->state = DONE;
+
 	return 0;
 }
 
@@ -377,14 +391,14 @@ static int on_message_complete(http_parser *parser)
 }
 
 GIT_INLINE(int) stream_write(
-	git_http_server *server,
+	git_stream *stream,
 	const char *data,
 	size_t len)
 {
 	git_trace(GIT_TRACE_TRACE,
 	          "Sending request:\n%.*s", (int)len, data);
 
-	return git_stream__write_full(server->stream, data, len, 0);
+	return git_stream__write_full(stream, data, len, 0);
 }
 
 const char *name_for_method(git_http_method method)
@@ -394,6 +408,8 @@ const char *name_for_method(git_http_method method)
 		return "GET";
 	case GIT_HTTP_METHOD_POST:
 		return "POST";
+	case GIT_HTTP_METHOD_CONNECT:
+		return "CONNECT";
 	}
 
 	return NULL;
@@ -566,6 +582,33 @@ GIT_INLINE(int) apply_proxy_credentials(
 	                         request->proxy_credentials);
 }
 
+static int generate_connect_request(
+	git_http_client *client,
+	git_http_request *request)
+{
+	git_buf *buf;
+	int error;
+
+	git_buf_clear(&client->request_msg);
+	buf = &client->request_msg;
+
+	git_buf_printf(buf, "CONNECT %s:%s HTTP/1.1\r\n",
+	               client->server.url.host, client->server.url.port);
+
+	git_buf_puts(buf, "User-Agent: ");
+	git_http__user_agent(buf);
+	git_buf_puts(buf, "\r\n");
+
+	git_buf_printf(buf, "Host: %s\r\n", client->proxy.url.host);
+
+	if ((error = apply_proxy_credentials(buf, client, request) < 0))
+		return -1;
+
+	git_buf_puts(buf, "\r\n");
+
+	return git_buf_oom(buf) ? -1 : 0;
+}
+
 static int generate_request(
 	git_http_client *client,
 	git_http_request *request)
@@ -593,6 +636,7 @@ static int generate_request(
 	git_buf_puts(buf, "User-Agent: ");
 	git_http__user_agent(buf);
 	git_buf_puts(buf, "\r\n");
+
 	git_buf_printf(buf, "Host: %s", request->url->host);
 
 	if (!git_net_url_is_default_port(request->url))
@@ -736,7 +780,12 @@ GIT_INLINE(int) server_setup_from_url(
 	return 0;
 }
 
-static int http_client_setup_hosts(
+static void reset_parser(git_http_client *client)
+{
+	git_buf_clear(&client->read_buf);
+}
+
+static int setup_hosts(
 	git_http_client *client,
 	git_http_request *request)
 {
@@ -749,38 +798,116 @@ static int http_client_setup_hosts(
 
 	diff |= ret;
 
+	/*
+	 * TODO: we could upgrade a non-CONNECT proxy connection to a CONNECT
+	 * without actually closing our socket and reconnecting.
+	 */
 	if (request->proxy &&
 	    (ret = server_setup_from_url(&client->proxy, request->proxy)) < 0)
 		return ret;
 
 	diff |= ret;
 
-	if (diff)
+	if (diff) {
+		free_auth_context(&client->server);
+		free_auth_context(&client->proxy);
+
 		client->connected = 0;
+	}
 
 	return 0;
 }
 
-static void reset_parser(git_http_client *client)
+GIT_INLINE(int) stream_for_url(git_stream **out, git_net_url *url)
 {
-	git_buf_clear(&client->read_buf);
+	if (strcasecmp(url->scheme, "https") == 0)
+		return git_tls_stream_new(out, url->host, url->port);
+	else if (strcasecmp(url->scheme, "http") == 0)
+		return git_socket_stream_new(out, url->host, url->port);
+
+	git_error_set(GIT_ERROR_NET, "unknown http scheme '%s'", url->scheme);
+	return -1;
 }
 
-static int http_client_connect(git_http_client *client)
+static int proxy_connect(
+	git_stream **out,
+	git_http_client *client,
+	git_http_request *request)
 {
-	git_net_url *url;
-	git_stream *proxy_stream = NULL, *stream = NULL;
-	git_transport_certificate_check_cb cert_cb;
-	void *cb_payload;
+	git_stream *stream;
+	git_http_response response = {0};
 	int error;
 
-	if (client->connected && client->keepalive &&
-	    (client->state == NONE || client->state == DONE))
-		return 0;
+	/* If the client did not finish reading, clean up the stream. */
+	if (client->state == READING_BODY)
+		;
 
-	git_trace(GIT_TRACE_DEBUG, "Connecting to %s:%s",
-		client->server.url.host, client->server.url.port);
+	if ((error = stream_for_url(&stream, &client->proxy.url)) < 0 ||
+	    (error = stream_connect(stream, &client->proxy.url,
+		client->opts.proxy_certificate_check_cb,
+		client->opts.proxy_certificate_check_payload)) < 0 ||
+	    (error = generate_connect_request(client, request)) < 0 ||
+	    (error = stream_write(stream, client->request_msg.ptr, client->request_msg.size)) < 0)
+		goto done;
 
+	client->state = SENT_REQUEST;
+	client->server.stream = stream;
+
+	http_parser_init(&client->parser, HTTP_RESPONSE);
+	git_buf_clear(&client->read_buf);
+
+	if ((error = git_http_client_read_response(&response, client)) < 0 ||
+	    (error = git_http_client_skip_body(client)) < 0)
+		goto done;
+
+	assert(client->state == DONE);
+	
+	if (response.status == 407) {
+		/* Buffer the response so we can return it in read_response */
+		client->state = PROXY_AUTH;
+
+		memcpy(&client->response, &response, sizeof(response));
+		memset(&response, 0, sizeof(response));
+
+		error = GIT_RETRY;
+		goto done;
+	} else if (response.status != 200) {
+		git_error_set(GIT_ERROR_NET, "proxy returned unexpected status: %d", response.status);
+		error = -1;
+		goto done;
+	}
+
+	client->state = NONE;
+	*out = stream;
+
+done:
+	git_http_response_dispose(&response);
+	return error;
+}
+
+static int server_connect(
+	git_stream **out,
+	git_http_client *client,
+	git_stream *proxy_stream)
+{
+	git_net_url *url = &client->server.url;
+	int error;
+
+	if (proxy_stream)
+		error = git_tls_stream_wrap(out, proxy_stream, url->host);
+	else
+		error = stream_for_url(out, url);
+
+	if (error < 0)
+		return error;
+
+	return stream_connect(*out, url,
+	                      client->opts.server_certificate_check_cb,
+	                      client->opts.server_certificate_check_payload);
+}
+
+GIT_INLINE(void) close_streams(git_http_client *client)
+{
 	if (client->server.stream) {
 		git_stream_close(client->server.stream);
 		git_stream_free(client->server.stream);
@@ -792,6 +919,31 @@ static int http_client_connect(git_http_client *client)
 		git_stream_free(client->proxy.stream);
 		client->proxy.stream = NULL;
 	}
+}
+
+static int http_client_connect(
+	git_http_client *client,
+	git_http_request *request)
+{
+	git_stream *proxy_stream = NULL, *stream = NULL;
+	bool use_proxy = false;
+	int error;
+
+	if ((error = setup_hosts(client, request)) < 0)
+		goto on_error;
+
+	if (client->connected && client->keepalive &&
+	    (client->state == NONE || client->state == DONE))
+		return 0;
+
+	git_trace(GIT_TRACE_DEBUG, "Connecting to %s%s%s%s%s:%s",
+		  client->proxy.url.host ? client->proxy.url.host : "",
+	          client->proxy.url.port ? ":" : "",
+	          client->proxy.url.port ? client->proxy.url.port : "",
+	          client->proxy.url.host ? " for " : "",
+	          client->server.url.host, client->server.url.port);
+
+	close_streams(client);
 
 	reset_auth_connection(&client->server);
 	reset_auth_connection(&client->proxy);
@@ -802,48 +954,24 @@ static int http_client_connect(git_http_client *client)
 	client->keepalive = 0;
 	client->request_count = 0;
 
-	if (client->proxy.url.host) {
-		url = &client->proxy.url;
-		cert_cb = client->opts.proxy_certificate_check_cb;
-		cb_payload = client->opts.proxy_certificate_check_payload;
-	} else {
-		url = &client->server.url;
-		cert_cb = client->opts.server_certificate_check_cb;
-		cb_payload = client->opts.server_certificate_check_payload;
-	}
+	use_proxy = client->proxy.url.host &&
+	            !strcmp(client->server.url.scheme, "https");
 
-	if (strcasecmp(url->scheme, "https") == 0) {
-		error = git_tls_stream_new(&stream, url->host, url->port);
-	} else if (strcasecmp(url->scheme, "http") == 0) {
-		error = git_socket_stream_new(&stream, url->host, url->port);
-	} else {
-		git_error_set(GIT_ERROR_NET, "unknown http scheme '%s'",
-		              url->scheme);
-		error = -1;
-	}
-
-	if (error < 0)
+	if (use_proxy &&
+	    (error = proxy_connect(&proxy_stream, client, request)) < 0)
 		goto on_error;
 
-	if ((error = stream_connect(stream, url, cert_cb, cb_payload)) < 0)
+	if ((error = server_connect(&stream, client, proxy_stream)) < 0)
 		goto on_error;
 
-	client->proxy.stream = proxy_stream;
 	client->server.stream = stream;
+	client->proxy.stream = proxy_stream;
+
 	client->connected = 1;
-	return 0;
+	return error;
 
 on_error:
-	if (stream) {
-		git_stream_close(stream);
-		git_stream_free(stream);
-	}
-
-	if (proxy_stream) {
-		git_stream_close(proxy_stream);
-		git_stream_free(proxy_stream);
-	}
-
+	close_streams(client);
 	return error;
 }
 
@@ -1013,8 +1141,9 @@ int git_http_client_send_request(
 	if (client->state == READING_BODY)
 		complete_response_body(client);
 
-	http_parser_init(&client->parser, HTTP_RESPONSE);
-	git_buf_clear(&client->read_buf);
+	/* If we're waiting for proxy auth, don't sending more requests. */
+	if (client->state == PROXY_AUTH)
+		return 0;
 
 	if (git_trace_level() >= GIT_TRACE_DEBUG) {
 		git_buf url = GIT_BUF_INIT;
@@ -1025,10 +1154,9 @@ int git_http_client_send_request(
 		git_buf_dispose(&url);
 	}
 
-	if ((error = http_client_setup_hosts(client, request)) < 0 ||
-	    (error = http_client_connect(client)) < 0 ||
+	if ((error = http_client_connect(client, request)) < 0 ||
 	    (error = generate_request(client, request)) < 0 ||
-	    (error = stream_write(&client->server,
+	    (error = stream_write(client->server.stream,
 	                          client->request_msg.ptr,
 	                          client->request_msg.size)) < 0)
 		goto done;
@@ -1042,7 +1170,13 @@ int git_http_client_send_request(
 		client->state = SENT_REQUEST;
 	}
 
+	http_parser_init(&client->parser, HTTP_RESPONSE);
+	git_buf_clear(&client->read_buf);
+
 done:
+	if (error == GIT_RETRY)
+		error = 0;
+
 	return error;
 }
 
@@ -1051,29 +1185,38 @@ int git_http_client_send_body(
 	const char *buffer,
 	size_t buffer_len)
 {
-	git_http_server *server;
+	git_stream *stream;
 	git_buf hdr = GIT_BUF_INIT;
 	int error;
 
-	assert(client && client->state == SENDING_BODY);
+	assert(client);
+
+	/* If we're waiting for proxy auth, don't sending more requests. */
+	if (client->state == PROXY_AUTH)
+		return 0;
+
+	if (client->state != SENDING_BODY) {
+		git_error_set(GIT_ERROR_NET, "client is in invalid state");
+		return -1;
+	}
 
 	if (!buffer_len)
 		return 0;
 
-	server = &client->server;
+	stream = client->server.stream;
 
 	if (client->request_body_len) {
 		assert(buffer_len <= client->request_body_remain);
 
-		if ((error = stream_write(server, buffer, buffer_len)) < 0)
+		if ((error = stream_write(stream, buffer, buffer_len)) < 0)
 			goto done;
 
 		client->request_body_remain -= buffer_len;
 	} else {
 		if ((error = git_buf_printf(&hdr, "%" PRIxZ "\r\n", buffer_len)) < 0 ||
-		    (error = stream_write(server, hdr.ptr, hdr.size)) < 0 ||
-		    (error = stream_write(server, buffer, buffer_len)) < 0 ||
-		    (error = stream_write(server, "\r\n", 2)) < 0)
+		    (error = stream_write(stream, hdr.ptr, hdr.size)) < 0 ||
+		    (error = stream_write(stream, buffer, buffer_len)) < 0 ||
+		    (error = stream_write(stream, "\r\n", 2)) < 0)
 			goto done;
 	}
 
@@ -1092,9 +1235,10 @@ static int complete_request(git_http_client *client)
 		git_error_set(GIT_ERROR_NET, "truncated write");
 		error = -1;
 	} else if (client->request_chunked) {
-		error = stream_write(&client->server, "0\r\n\r\n", 5);
+		error = stream_write(client->server.stream, "0\r\n\r\n", 5);
 	}
 
+	client->state = SENT_REQUEST;
 	return error;
 }
 
@@ -1110,7 +1254,16 @@ int git_http_client_read_response(
 	if (client->state == SENDING_BODY) {
 		if ((error = complete_request(client)) < 0)
 			goto done;
-	} else if (client->state != SENT_REQUEST) {
+	}
+
+	if (client->state == PROXY_AUTH) {
+		memcpy(response, &client->response, sizeof(client->response));
+		memset(&client->response, 0, sizeof(client->response));
+		client->state = DONE;
+		return 0;
+	}
+	
+	if (client->state != SENT_REQUEST) {
 		git_error_set(GIT_ERROR_NET, "client is in invalid state");
 		error = -1;
 		goto done;
