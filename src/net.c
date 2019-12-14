@@ -374,6 +374,18 @@ int git_net_url_fmt(git_buf *buf, git_net_url *url)
 	return git_buf_oom(buf);
 }
 
+int git_net_url_fmt_path(git_buf *buf, git_net_url *url)
+{
+	git_buf_puts(buf, url->path ? url->path : "/");
+
+	if (url->query) {
+		git_buf_putc(buf, '?');
+		git_buf_puts(buf, url->query);
+	}
+
+	return git_buf_oom(buf);
+}
+
 void git_net_url_dispose(git_net_url *url)
 {
 	if (url->username)
