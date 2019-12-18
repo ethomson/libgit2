@@ -47,10 +47,11 @@ typedef struct {
 	char *location;
 
 	/* Authentication headers */
-	unsigned server_credtypes;   /**< Supported cred types for remote */
-	unsigned proxy_credtypes;    /**< Supported cred types for proxy */
+	unsigned server_credtypes;       /**< Supported cred types for remote */
+	unsigned proxy_credtypes;        /**< Supported cred types for proxy */
 
-	unsigned resend_credentials; /**< Resend request for authentication */
+	unsigned chunked : 1,            /**< Response body is chunked */
+	         resend_credentials : 1; /**< Resend request for authentication */
 } git_http_response;
 
 typedef struct {
