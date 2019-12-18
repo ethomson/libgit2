@@ -42,9 +42,9 @@ typedef struct {
 
 typedef enum {
 	NONE = 0,
-	PROXY_AUTH,
 	SENDING_BODY,
 	SENT_REQUEST,
+	HAS_EARLY_RESPONSE,
 	READING_RESPONSE,
 	READING_BODY,
 	DONE
@@ -111,10 +111,10 @@ struct git_http_client {
 	       request_body_remain;
 
 	/*
-	 * When saved_response = 1, the response of our proxy that we
-	 * have buffered and will deliver during read_response.
+	 * When state == HAS_EARLY_RESPONSE, the response of our proxy
+	 * that we have buffered and will deliver during read_response.
 	 */
-	git_http_response response;
+	git_http_response early_response;
 };
 
 bool git_http_response_is_redirect(git_http_response *response)
@@ -866,9 +866,9 @@ static int proxy_connect(
 	
 	if (response.status == 407) {
 		/* Buffer the response so we can return it in read_response */
-		client->state = PROXY_AUTH;
+		client->state = HAS_EARLY_RESPONSE;
 
-		memcpy(&client->response, &response, sizeof(response));
+		memcpy(&client->early_response, &response, sizeof(response));
 		memset(&response, 0, sizeof(response));
 
 		*out = stream;
@@ -1160,7 +1160,7 @@ int git_http_client_send_request(
 		complete_response_body(client);
 
 	/* If we're waiting for proxy auth, don't sending more requests. */
-	if (client->state == PROXY_AUTH)
+	if (client->state == HAS_EARLY_RESPONSE)
 		return 0;
 
 	if (git_trace_level() >= GIT_TRACE_DEBUG) {
@@ -1209,7 +1209,7 @@ int git_http_client_send_body(
 	assert(client);
 
 	/* If we're waiting for proxy auth, don't sending more requests. */
-	if (client->state == PROXY_AUTH)
+	if (client->state == HAS_EARLY_RESPONSE)
 		return 0;
 
 	if (client->state != SENDING_BODY) {
@@ -1273,9 +1273,9 @@ int git_http_client_read_response(
 			goto done;
 	}
 
-	if (client->state == PROXY_AUTH) {
-		memcpy(response, &client->response, sizeof(client->response));
-		memset(&client->response, 0, sizeof(client->response));
+	if (client->state == HAS_EARLY_RESPONSE) {
+		memcpy(response, &client->early_response, sizeof(git_http_response));
+		memset(&client->early_response, 0, sizeof(git_http_response));
 		client->state = DONE;
 		return 0;
 	}
