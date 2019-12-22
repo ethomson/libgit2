@@ -1199,6 +1199,8 @@ int git_http_client_send_request(
 		    (error = git_http_client_skip_body(client)) < 0)
 			goto done;
 
+		error = 0;
+
 		if (response.status != 100) {
 			save_early_response(client, &response);
 			goto done;
@@ -1220,6 +1222,12 @@ done:
 
 	git_http_response_dispose(&response);
 	return error;
+}
+
+bool git_http_client_has_response(git_http_client *client)
+{
+	return (client->state == HAS_EARLY_RESPONSE ||
+	        client->state > SENT_REQUEST);
 }
 
 int git_http_client_send_body(
