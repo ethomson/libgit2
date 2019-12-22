@@ -9,14 +9,12 @@
 #define INCLUDE_transports_http_h__
 
 #include "buffer.h"
+#include "httpclient.h"
 
 #define GIT_HTTP_REPLAY_MAX 15
 
-typedef enum { GET, POST } git_http_verb;
-
-typedef struct
-{
-	git_http_verb verb;
+typedef struct {
+	git_http_method method;
 	const char *url;
 	const char *request_type;
 	const char *response_type;
