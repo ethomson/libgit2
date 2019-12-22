@@ -505,7 +505,7 @@ static const char *init_auth_context(
 	error = scheme->init_context(&server->auth_context, &server->url);
 
 	if (error == GIT_PASSTHROUGH) {
-		git_error_set(GIT_ERROR_NET, "mechanism declined to authenticate");
+		git_error_set(GIT_ERROR_NET, "'%s' authentication is not supported", scheme->name);
 		return NULL;
 	}
 
