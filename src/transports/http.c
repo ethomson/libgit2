@@ -439,7 +439,7 @@ static int send_probe(http_stream *stream)
 	git_net_url url = GIT_NET_URL_INIT;
 	git_http_request request = {0};
 	git_http_response response = {0};
-	bool complete;
+	bool complete = false;
 	size_t step;
 	int error;
 
