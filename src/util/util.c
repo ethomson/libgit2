@@ -21,6 +21,29 @@
 # include <Shlwapi.h>
 #endif
 
+int git_strarray_copy_strings(git_strarray *tgt, const git_strarray *src, size_t n)
+{
+	size_t i;
+
+	assert(tgt && src);
+
+	if (!n)
+		return 0;
+
+	for (i = 0; i < n; i++) {
+		if (!src->strings[i])
+			continue;
+
+		if (!(tgt->strings[i] = git__strdup(src->strings[i]))) {
+			git_strarray_free(tgt);
+			return -1;
+		}
+	}
+
+	tgt->count = src->count;
+	return 0;
+}
+
 int git__strntol64(int64_t *result, const char *nptr, size_t nptr_len, const char **endptr, int base)
 {
 	const char *p;
