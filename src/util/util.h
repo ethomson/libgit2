@@ -14,6 +14,7 @@
 #endif
 
 #include "git2/buffer.h"
+#include "git2/strarray.h"
 
 #include "buffer.h"
 #include "strnlen.h"
@@ -335,6 +336,18 @@ extern int git__utf8_iterate(const uint8_t *str, int str_len, int32_t *dst);
  * @return length in bytes of the string that contains valid data
  */
 extern size_t git__utf8_valid_buf_length(const uint8_t *str, size_t str_len);
+
+/**
+ * Copy the strings from one `git_strarray` to another.  The target
+ * git_strarray must be allocated with at least enough space to hold the
+ * number of strings to copy.
+ *
+ * @param tgt The destination string array
+ * @param src The source string array
+ * @param n The number of strings to copy
+ */
+extern int git_strarray_copy_strings(
+	git_strarray *tgt, const git_strarray *src, size_t n);
 
 /*
  * Safely zero-out memory, making sure that the compiler
