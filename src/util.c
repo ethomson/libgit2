@@ -926,3 +926,33 @@ int git__getenv(git_buf *out, const char *name)
 	return git_buf_puts(out, val);
 }
 #endif
+
+int git__system_errmsg(git_buf *out)
+{
+#ifdef GIT_WIN32
+	if (GetLastError() != 0) {
+		char *msg = git_win32_get_error_message(GetLastError());
+
+		if (msg == NULL) {
+			out->ptr = git_buf__oom;
+			return -1;
+		}
+
+		git_buf_puts(out, msg);
+		git__free(msg);
+
+		SetLastError(0);
+		return 0;
+	}
+#endif
+
+	if (errno) {
+		git_buf_puts(out, strerror(errno));
+
+		errno = 0;
+		return 0;
+	}
+
+	git_buf_puts(out, "no error");
+	return 0;
+}

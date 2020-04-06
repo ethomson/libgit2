@@ -414,6 +414,11 @@ GIT_INLINE(double) git__timer(void)
 
 extern int git__getenv(git_buf *out, const char *name);
 
+/*
+ * Places the system error message into the `git_buf`.
+ */
+extern int git__system_errmsg(git_buf *out);
+
 #include "alloc.h"
 
 #endif
