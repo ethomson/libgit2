@@ -13,6 +13,7 @@
 #include "futils.h"
 #include "tree-cache.h"
 #include "index.h"
+#include "repo_path.h"
 
 #define DEFAULT_TREE_SIZE 16
 #define MAX_FILEMODE_BYTES 6
