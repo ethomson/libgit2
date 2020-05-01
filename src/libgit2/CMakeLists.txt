@@ -1,8 +1,3 @@
-IF(DEBUG_POOL)
-	SET(GIT_DEBUG_POOL 1)
-ENDIF()
-ADD_FEATURE_INFO(debugpool GIT_DEBUG_POOL "debug pool allocator")
-
 INCLUDE(PkgBuildConfig)
 
 # This variable will contain the libraries we need to put into
@@ -30,25 +25,6 @@ ADD_FEATURE_INFO(tracing GIT_TRACE "tracing support")
 CHECK_FUNCTION_EXISTS(futimens HAVE_FUTIMENS)
 IF (HAVE_FUTIMENS)
 	SET(GIT_USE_FUTIMENS 1)
-ENDIF ()
-
-CHECK_PROTOTYPE_DEFINITION(qsort_r
-	"void qsort_r(void *base, size_t nmemb, size_t size, void *thunk, int (*compar)(void *, const void *, const void *))"
-	"" "stdlib.h" HAVE_QSORT_R_BSD)
-IF (HAVE_QSORT_R_BSD)
-	ADD_DEFINITIONS(-DHAVE_QSORT_R_BSD)
-ENDIF()
-
-CHECK_PROTOTYPE_DEFINITION(qsort_r
-	"void qsort_r(void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *, void *), void *arg)"
-	"" "stdlib.h" HAVE_QSORT_R_GNU)
-IF (HAVE_QSORT_R_GNU)
-	ADD_DEFINITIONS(-DHAVE_QSORT_R_GNU)
-ENDIF()
-
-CHECK_FUNCTION_EXISTS(qsort_s HAVE_QSORT_S)
-IF (HAVE_QSORT_S)
-	ADD_DEFINITIONS(-DHAVE_QSORT_S)
 ENDIF ()
 
 # Find required dependencies
