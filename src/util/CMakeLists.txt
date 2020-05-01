@@ -1,0 +1,28 @@
+include(SelectHashes)
+
+set(LIBGIT2_UTIL_INCLUDES
+	"${libgit2_BINARY_DIR}/src"
+	"${libgit2_SOURCE_DIR}/src/util")
+
+# Collect sourcefiles
+file(GLOB SRC_UTIL_H
+	"${libgit2_SOURCE_DIR}/include/git2.h"
+	"${libgit2_SOURCE_DIR}/include/git2/*.h"
+	"${libgit2_SOURCE_DIR}/include/git2/sys/*.h")
+
+file(GLOB SRC_UTIL *.c *.h ${SRC_SHA1} allocators/*.c allocators/*.h)
+
+if(WIN32 AND NOT CYGWIN)
+	file(GLOB SRC_UTIL_OS win32/*.c win32/*.h)
+else()
+	file(GLOB SRC_UTIL_OS unix/*.c unix/*.h)
+endif()
+
+# Utility functions shared with other parts of the libgit2
+set(UTIL_SOURCES ${SRC_UTIL} ${SRC_UTIL_OS})
+add_library(util OBJECT ${UTIL_SOURCES})
+list(APPEND UTIL_OBJECTS $<TARGET_OBJECTS:util>)
+
+target_include_directories(util PRIVATE ${LIBGIT2_UTIL_INCLUDES} PUBLIC ${libgit2_SOURCE_DIR}/include)
+target_include_directories(util SYSTEM PRIVATE ${LIBGIT2_UTIL_SYSTEM_INCLUDES})
+
