@@ -1,95 +1,95 @@
-INCLUDE(PkgBuildConfig)
+include(PkgBuildConfig)
 
-LIST(APPEND LIBGIT2_INCLUDES
+list(APPEND LIBGIT2_INCLUDES
 	"${libgit2_BINARY_DIR}/src/generated"
 	"${libgit2_SOURCE_DIR}/src/util"
 	"${libgit2_SOURCE_DIR}/src/libgit2"
 	"${libgit2_SOURCE_DIR}/include")
 
-FILE(GLOB SRC_H
+file(GLOB SRC_H
 	"${libgit2_SOURCE_DIR}/include/git2.h"
 	"${libgit2_SOURCE_DIR}/include/git2/*.h"
 	"${libgit2_SOURCE_DIR}/include/git2/sys/*.h")
 
 # On Windows use specific platform sources
-IF (WIN32 AND NOT CYGWIN)
-	IF(MSVC)
-		SET(WIN_RC "win32/git2.rc")
-	ENDIF()
+if(WIN32 AND NOT CYGWIN)
+	if(MSVC)
+		set(WIN_RC "win32/git2.rc")
+	endif()
 
-	FILE(GLOB SRC_OS win32/*.c win32/*.h)
-ELSEIF (AMIGA)
-	ADD_DEFINITIONS(-DNO_ADDRINFO -DNO_READDIR_R -DNO_MMAP)
-ELSE()
-	FILE(GLOB SRC_OS unix/*.c unix/*.h)
-ENDIF()
+	file(GLOB SRC_OS win32/*.c win32/*.h)
+elseif(AMIGA)
+	add_definitions(-DNO_ADDRINFO -DNO_READDIR_R -DNO_MMAP)
+else()
+	file(GLOB SRC_OS unix/*.c unix/*.h)
+endif()
 
-FILE(GLOB SRC_GIT2 *.c *.h
+file(GLOB SRC_GIT2 *.c *.h
 	streams/*.c streams/*.h
 	transports/*.c transports/*.h
 	xdiff/*.c xdiff/*.h)
 
-IF(APPLE)
+if(APPLE)
 	# The old Secure Transport API has been deprecated in macOS 10.15.
-	SET_SOURCE_FILES_PROPERTIES(streams/stransport.c PROPERTIES COMPILE_FLAGS -Wno-deprecated)
-ENDIF()
+	set_source_files_properties(streams/stransport.c PROPERTIES COMPILE_FLAGS -Wno-deprecated)
+endif()
 
 # the xdiff dependency is not (yet) warning-free, disable warnings as
 # errors for the xdiff sources until we've sorted them out
-IF(MSVC)
-	SET_SOURCE_FILES_PROPERTIES(xdiff/xdiffi.c PROPERTIES COMPILE_FLAGS -WX-)
-	SET_SOURCE_FILES_PROPERTIES(xdiff/xutils.c PROPERTIES COMPILE_FLAGS -WX-)
-ENDIF()
+if(MSVC)
+	set_source_files_properties(xdiff/xdiffi.c PROPERTIES COMPILE_FLAGS -WX-)
+	set_source_files_properties(xdiff/xutils.c PROPERTIES COMPILE_FLAGS -WX-)
+endif()
 
-SET(LIBGIT2_SOURCES ${SRC_H} ${SRC_GIT2} ${SRC_OS} ${SRC_SSH})
+set(LIBGIT2_SOURCES ${SRC_H} ${SRC_GIT2} ${SRC_OS} ${SRC_SSH})
 
-ADD_LIBRARY(libgit2 OBJECT ${LIBGIT2_SOURCES})
-SET_TARGET_PROPERTIES(libgit2 PROPERTIES C_STANDARD 90)
-IDE_SPLIT_SOURCES(libgit2)
-LIST(APPEND LIBGIT2_OBJECTS $<TARGET_OBJECTS:libgit2>)
-LIST(APPEND LIBGIT2_OBJECTS $<TARGET_OBJECTS:util>)
+add_library(libgit2 OBJECT ${LIBGIT2_SOURCES})
+set_target_properties(libgit2 PROPERTIES C_STANDARD 90)
+ide_split_sources(libgit2)
+list(APPEND LIBGIT2_OBJECTS $<TARGET_OBJECTS:libgit2>)
+list(APPEND LIBGIT2_OBJECTS $<TARGET_OBJECTS:util>)
 
-TARGET_INCLUDE_DIRECTORIES(libgit2 PRIVATE ${LIBGIT2_INCLUDES} PUBLIC ${libgit2_SOURCE_DIR}/include)
-TARGET_INCLUDE_DIRECTORIES(libgit2 SYSTEM PRIVATE ${LIBGIT2_SYSTEM_INCLUDES})
+target_include_directories(libgit2 PRIVATE ${LIBGIT2_INCLUDES} PUBLIC ${libgit2_SOURCE_DIR}/include)
+target_include_directories(libgit2 SYSTEM PRIVATE ${LIBGIT2_SYSTEM_INCLUDES})
 
-IF(XCODE_VERSION)
+if(XCODE_VERSION)
 	# This is required for Xcode to actually link the libgit2 library
 	# when using only object libraries.
-	FILE(WRITE ${CMAKE_CURRENT_BINARY_DIR}/dummy.c "")
-	LIST(APPEND LIBGIT2_OBJECTS ${CMAKE_CURRENT_BINARY_DIR}/dummy.c)
-ENDIF()
+	file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/dummy.c "")
+	list(APPEND LIBGIT2_OBJECTS ${CMAKE_CURRENT_BINARY_DIR}/dummy.c)
+endif()
 
 # Compile and link libgit2
-ADD_LIBRARY(libgit2_meta ${WIN_RC} ${LIBGIT2_OBJECTS})
-TARGET_LINK_LIBRARIES(libgit2_meta ${LIBGIT2_LIBS})
+add_library(libgit2_meta ${WIN_RC} ${LIBGIT2_OBJECTS})
+target_link_libraries(libgit2_meta ${LIBGIT2_LIBS})
 
-SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES C_STANDARD 90)
-SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${libgit2_BINARY_DIR})
-SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${libgit2_BINARY_DIR})
-SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${libgit2_BINARY_DIR})
+set_target_properties(libgit2_meta PROPERTIES C_STANDARD 90)
+set_target_properties(libgit2_meta PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${libgit2_BINARY_DIR})
+set_target_properties(libgit2_meta PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${libgit2_BINARY_DIR})
+set_target_properties(libgit2_meta PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${libgit2_BINARY_DIR})
 
 # Workaround for Cmake bug #0011240 (see http://public.kitware.com/Bug/view.php?id=11240)
 # Win64+MSVC+static libs = linker error
-IF(MSVC AND GIT_ARCH_64 AND NOT BUILD_SHARED_LIBS)
-  SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES STATIC_LIBRARY_FLAGS "/MACHINE:x64")
-ENDIF()
+if(MSVC AND GIT_ARCH_64 AND NOT BUILD_SHARED_LIBS)
+	set_target_properties(libgit2_meta PROPERTIES STATIC_LIBRARY_FLAGS "/MACHINE:x64")
+endif()
 
-IDE_SPLIT_SOURCES(libgit2_meta)
+ide_split_sources(libgit2_meta)
 
-IF (SONAME)
-	SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES VERSION ${LIBGIT2_VERSION_STRING})
-	SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES SOVERSION ${LIBGIT2_SOVERSION})
-	IF (LIBGIT2_FILENAME)
-		ADD_DEFINITIONS(-DLIBGIT2_FILENAME=\"${LIBGIT2_FILENAME}\")
-		SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES OUTPUT_NAME ${LIBGIT2_FILENAME})
-	ELSEIF (DEFINED LIBGIT2_PREFIX)
-		SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES PREFIX "${LIBGIT2_PREFIX}")
-	ELSE ()
-		SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES OUTPUT_NAME git2)
-	ENDIF()
-ENDIF()
+if(SONAME)
+	set_target_properties(libgit2_meta PROPERTIES VERSION ${LIBGIT2_VERSION_STRING})
+	set_target_properties(libgit2_meta PROPERTIES SOVERSION ${LIBGIT2_SOVERSION})
+	if(LIBGIT2_FILENAME)
+		add_definitions(-DLIBGIT2_FILENAME=\"${LIBGIT2_FILENAME}\")
+		set_target_properties(libgit2_meta PROPERTIES OUTPUT_NAME ${LIBGIT2_FILENAME})
+	elseif(DEFINED LIBGIT2_PREFIX)
+		set_target_properties(libgit2_meta PROPERTIES PREFIX "${LIBGIT2_PREFIX}")
+	else()
+		set_target_properties(libgit2_meta PROPERTIES OUTPUT_NAME git2)
+	endif()
+endif()
 
-PKG_BUILD_CONFIG(NAME libgit2
+pkg_build_config(NAME libgit2
 	VERSION ${LIBGIT2_VERSION_STRING}
 	DESCRIPTION "A cross-platform, linkable library implementation of Git that you can use in your application."
 	LIBS_SELF libgit2_meta
@@ -97,17 +97,17 @@ PKG_BUILD_CONFIG(NAME libgit2
 	REQUIRES ${LIBGIT2_PC_REQUIRES}
 )
 
-IF (MSVC_IDE)
+if(MSVC_IDE)
    # Precompiled headers
-   SET_TARGET_PROPERTIES(libgit2_meta PROPERTIES COMPILE_FLAGS "/Yuprecompiled.h /FIprecompiled.h")
-   SET_SOURCE_FILES_PROPERTIES(win32/precompiled.c COMPILE_FLAGS "/Ycprecompiled.h")
-ENDIF ()
+	set_target_properties(libgit2_meta PROPERTIES COMPILE_FLAGS "/Yuprecompiled.h /FIprecompiled.h")
+	set_source_files_properties(win32/precompiled.c COMPILE_FLAGS "/Ycprecompiled.h")
+endif()
 
 # Install
-INSTALL(TARGETS libgit2_meta
+install(TARGETS libgit2_meta
 	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
-INSTALL(DIRECTORY ${libgit2_SOURCE_DIR}/include/git2 DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-INSTALL(FILES ${libgit2_SOURCE_DIR}/include/git2.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY ${libgit2_SOURCE_DIR}/include/git2 DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES ${libgit2_SOURCE_DIR}/include/git2.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
