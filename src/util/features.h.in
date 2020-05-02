@@ -16,6 +16,10 @@
 #cmakedefine GIT_USE_STAT_MTIME_NSEC 1
 #cmakedefine GIT_USE_FUTIMENS 1
 
+#cmakedefine GIT_USE_QSORT_R_BSD
+#cmakedefine GIT_USE_QSORT_R_GNU
+#cmakedefine GIT_USE_QSORT_S
+
 #cmakedefine GIT_REGEX_REGCOMP_L
 #cmakedefine GIT_REGEX_REGCOMP
 #cmakedefine GIT_REGEX_PCRE

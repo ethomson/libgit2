@@ -5,10 +5,10 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
-#ifndef INCLUDE_allocators_crtdbg_h
-#define INCLUDE_allocators_crtdbg_h
+#ifndef INCLUDE_util_allocators_crtdbg_h
+#define INCLUDE_util_allocators_crtdbg_h
 
-#include "common.h"
+#include "git2_util.h"
 
 #include "alloc.h"
 

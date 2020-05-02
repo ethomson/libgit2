@@ -5,9 +5,8 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
+#include "git2_util.h"
 #include "util.h"
-
-#include "common.h"
 
 #ifdef GIT_WIN32
 # include "win32/utf-conv.h"

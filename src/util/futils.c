@@ -7,8 +7,8 @@
 
 #include "futils.h"
 
-#include "global.h"
 #include "strmap.h"
+#include "hash.h"
 #include <ctype.h>
 #if GIT_WIN32
 #include "win32/findfile.h"

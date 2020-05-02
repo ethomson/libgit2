@@ -4,8 +4,8 @@
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
-#ifndef INCLUDE_integer_h__
-#define INCLUDE_integer_h__
+#ifndef INCLUDE_util_integer_h__
+#define INCLUDE_util_integer_h__
 
 /** @return true if p fits into the range of a size_t */
 GIT_INLINE(int) git__is_sizet(int64_t p)

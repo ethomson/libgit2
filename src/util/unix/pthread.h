@@ -5,8 +5,8 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
-#ifndef INCLUDE_unix_pthread_h__
-#define INCLUDE_unix_pthread_h__
+#ifndef INCLUDE_util_unix_pthread_h__
+#define INCLUDE_util_unix_pthread_h__
 
 typedef struct {
 	pthread_t thread;

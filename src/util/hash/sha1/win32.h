@@ -5,8 +5,8 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
-#ifndef INCLUDE_hash_sha1_win32_h__
-#define INCLUDE_hash_sha1_win32_h__
+#ifndef INCLUDE_util_hash_sha1_win32_h__
+#define INCLUDE_util_hash_sha1_win32_h__
 
 #include "hash/sha1.h"
 

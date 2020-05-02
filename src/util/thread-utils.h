@@ -4,8 +4,8 @@
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
-#ifndef INCLUDE_thread_utils_h__
-#define INCLUDE_thread_utils_h__
+#ifndef INCLUDE_util_thread_utils_h__
+#define INCLUDE_util_thread_utils_h__
 
 #if defined(__GNUC__) && defined(GIT_THREADS)
 # if (__GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 1))

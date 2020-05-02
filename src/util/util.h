@@ -4,10 +4,10 @@
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
-#ifndef INCLUDE_util_h__
-#define INCLUDE_util_h__
+#ifndef INCLUDE_util_util_h__
+#define INCLUDE_util_util_h__
 
-#include "common.h"
+#include "git2_util.h"
 
 #ifndef GIT_WIN32
 # include <ctype.h>
@@ -16,7 +16,6 @@
 #include "git2/buffer.h"
 
 #include "buffer.h"
-#include "common.h"
 #include "strnlen.h"
 #include "thread-utils.h"
 

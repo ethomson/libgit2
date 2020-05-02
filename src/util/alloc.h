@@ -5,8 +5,8 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
-#ifndef INCLUDE_alloc_h__
-#define INCLUDE_alloc_h__
+#ifndef INCLUDE_util_alloc_h__
+#define INCLUDE_util_alloc_h__
 
 #include "git2/sys/alloc.h"
 

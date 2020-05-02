@@ -4,10 +4,10 @@
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
-#ifndef INCLUDE_oid_h__
-#define INCLUDE_oid_h__
+#ifndef INCLUDE_util_oid_h__
+#define INCLUDE_util_oid_h__
 
-#include "common.h"
+#include "git2_util.h"
 
 #include "git2/oid.h"
 
