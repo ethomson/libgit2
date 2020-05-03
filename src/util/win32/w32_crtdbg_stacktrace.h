@@ -7,7 +7,7 @@
 #ifndef INCLUDE_win32_w32_crtdbg_stacktrace_h__
 #define INCLUDE_win32_w32_crtdbg_stacktrace_h__
 
-#include "common.h"
+#include "git2_util.h"
 
 #if defined(GIT_MSVC_CRTDBG)
 
