@@ -111,3 +111,11 @@ install(TARGETS libgit2_meta
 )
 install(DIRECTORY ${libgit2_SOURCE_DIR}/include/git2 DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES ${libgit2_SOURCE_DIR}/include/git2.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# export these variables for the test framework; it links our object
+# files directly (instead of linking to libgit2.so) so that it can
+# test private and internal functions.
+set_property(GLOBAL PROPERTY libgit2_objects ${LIBGIT2_OBJECTS})
+set_property(GLOBAL PROPERTY libgit2_includes ${LIBGIT2_INCLUDES})
+set_property(GLOBAL PROPERTY libgit2_system_includes ${LIBGIT2_SYSTEM_INCLUDES})
+set_property(GLOBAL PROPERTY libgit2_libs ${LIBGIT2_LIBS})
