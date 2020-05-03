@@ -7,10 +7,8 @@
 #ifndef INCLUDE_win32_posix_h__
 #define INCLUDE_win32_posix_h__
 
-#include "common.h"
 #include "../posix.h"
 #include "win32-compat.h"
-#include "path_w32.h"
 #include "utf-conv.h"
 #include "dir.h"
 

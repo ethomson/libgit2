@@ -7,8 +7,7 @@
 #ifndef INCLUDE_win32_dir_h__
 #define INCLUDE_win32_dir_h__
 
-#include "common.h"
-
+#include "git2_util.h"
 #include "w32_util.h"
 
 struct git__dirent {

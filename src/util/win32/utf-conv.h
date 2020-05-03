@@ -7,7 +7,7 @@
 #ifndef INCLUDE_win32_utf_conv_h__
 #define INCLUDE_win32_utf_conv_h__
 
-#include "common.h"
+#include "git2_util.h"
 
 #include <wchar.h>
 

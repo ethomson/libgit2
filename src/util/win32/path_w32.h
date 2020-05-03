@@ -7,7 +7,8 @@
 #ifndef INCLUDE_win32_path_w32_h__
 #define INCLUDE_win32_path_w32_h__
 
-#include "common.h"
+#include "git2_util.h"
+#include "path_w32.h"
 #include "vector.h"
 
 /**

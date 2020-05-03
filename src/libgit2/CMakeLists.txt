@@ -17,6 +17,7 @@ if(WIN32 AND NOT CYGWIN)
 		set(WIN_RC "win32/git2.rc")
 	endif()
 
+	list(APPEND LIBGIT2_INCLUDES "${libgit2_SOURCE_DIR}/src/util/win32")
 	file(GLOB SRC_OS win32/*.c win32/*.h)
 elseif(AMIGA)
 	add_definitions(-DNO_ADDRINFO -DNO_READDIR_R -DNO_MMAP)

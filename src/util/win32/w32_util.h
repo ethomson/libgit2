@@ -8,7 +8,7 @@
 #ifndef INCLUDE_win32_w32_util_h__
 #define INCLUDE_win32_w32_util_h__
 
-#include "common.h"
+#include "git2_util.h"
 
 #include "utf-conv.h"
 #include "posix.h"

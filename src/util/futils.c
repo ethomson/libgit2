@@ -10,9 +10,6 @@
 #include "strmap.h"
 #include "hash.h"
 #include <ctype.h>
-#if GIT_WIN32
-#include "win32/findfile.h"
-#endif
 
 int git_futils_mkpath2file(const char *file_path, const mode_t mode)
 {

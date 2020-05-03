@@ -13,9 +13,9 @@ file(GLOB SRC_UTIL_H
 file(GLOB SRC_UTIL *.c *.h ${SRC_SHA1} allocators/*.c allocators/*.h)
 
 if(WIN32 AND NOT CYGWIN)
+	file(GLOB SRC_UTIL_OS win32/*.c win32/*.h)
 else()
-	FILE(GLOB SRC_UTIL_OS
-		unix/map.c unix/posix.h unix/pthread.h unix/realpath.c)
+	file(GLOB SRC_UTIL_OS unix/*.c unix/*.h)
 endif()
 
 # Utility functions shared with other parts of the libgit2

@@ -5,16 +5,14 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
-#include "common.h"
+#include "git2_util.h"
 
 #include "../posix.h"
 #include "../futils.h"
 #include "path.h"
 #include "path_w32.h"
 #include "utf-conv.h"
-#include "repository.h"
 #include "reparse.h"
-#include "global.h"
 #include "buffer.h"
 #include <errno.h>
 #include <io.h>
