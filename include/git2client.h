@@ -9,5 +9,6 @@
 #define INCLUDE_git_client_h__
 
 #include "git2client/global.h"
+#include "git2client/ssh_subtransport.h"
 
 #endif
