@@ -11,5 +11,6 @@
 #include <git2.h>
 #include "git2client/exec_filter.h"
 #include "git2client/global.h"
+#include "git2client/ssh_subtransport.h"
 
 #endif
