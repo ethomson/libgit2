@@ -17,6 +17,7 @@ int cli_global_init()
 	git_allocator_global_init();
 
 	git_ssh_subtransport_register();
+	git_exec_filter_register();
 
 	return 0;
 }
