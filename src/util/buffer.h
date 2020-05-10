@@ -20,6 +20,11 @@
 extern char git_buf__initbuf[];
 extern char git_buf__oom[];
 
+#define ENSURE_SIZE(b, d) \
+	if ((b)->ptr == git_buf__oom || \
+	    ((d) > (b)->asize && git_buf_grow((b), (d)) < 0))\
+		return -1;
+
 /* Use to initialize buffer structure when git_buf is on stack */
 #define GIT_BUF_INIT { git_buf__initbuf, 0, 0 }
 
