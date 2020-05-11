@@ -60,7 +60,7 @@ int main(int argc, char **argv)
 		 */
 		if (command) {
 			args = &argv[optparser.idx];
-			args_len = argc - optparser.idx;
+			args_len = (int)(argc - optparser.idx);
 			break;
 		}
 	}
