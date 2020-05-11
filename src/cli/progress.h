@@ -81,8 +81,8 @@ extern int cli_progress_fetch_transfer(
  */
 extern void cli_progress_checkout(
 	const char *path,
-	unsigned long completed_steps,
-	unsigned long total_steps,
+	size_t completed_steps,
+	size_t total_steps,
 	void *payload);
 
 /**

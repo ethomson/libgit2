@@ -19,9 +19,9 @@
 #define return_os_error(msg) do { \
 	git_error_set(GIT_ERROR_OS, "%s", msg); return -1; } while(0)
 
-GIT_INLINE(size_t) no_nl_len(const char *str, int len)
+GIT_INLINE(size_t) no_nl_len(const char *str, size_t len)
 {
-	int i = 0;
+	size_t i = 0;
 
 	while (i < len && !is_nl(str[i]))
 		i++;
@@ -135,7 +135,7 @@ static int progress_complete(cli_progress *progress)
 	return 0;
 }
 
-GIT_INLINE(int) percent(int completed, int total)
+GIT_INLINE(int) percent(size_t completed, size_t total)
 {
 	if (total == 0)
 		return (completed == 0) ? 100 : 0;
@@ -203,7 +203,7 @@ static int fetch_receiving(
 	else
 		now = git__timer();
 
-	recv_len = stats->received_bytes;
+	recv_len = (double)stats->received_bytes;
 
 	elapsed = now - progress->action_start;
 	rate = elapsed ? recv_len / elapsed : 0;
@@ -283,8 +283,8 @@ int cli_progress_fetch_transfer(const git_indexer_progress *stats, void *payload
 
 void cli_progress_checkout(
 	const char *path,
-	unsigned long completed_steps,
-	unsigned long total_steps,
+	size_t completed_steps,
+	size_t total_steps,
 	void *payload)
 {
 	cli_progress *progress = (cli_progress *)payload;
