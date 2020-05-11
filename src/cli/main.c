@@ -13,7 +13,7 @@
 
 static int show_help;
 static int show_version;
-static const char *command = NULL;
+static char *command = NULL;
 static char **args = NULL;
 
 const cli_opt_spec cli_common_opts[] = {
