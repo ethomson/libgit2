@@ -10,12 +10,12 @@
 #include "cli.h"
 #include "cmd.h"
 #include "error.h"
+#include "progress.h"
 
 #include "path.h"
 #include "futils.h"
-#include "progress.h"
 
-static const char *branch, *remote_path, *local_path;
+static char *branch, *remote_path, *local_path;
 static int show_help, quiet, checkout = 1, bare;
 static bool local_path_exists;
 static cli_progress progress = CLI_PROGRESS_INIT;
@@ -25,7 +25,7 @@ static const cli_opt_spec opts[] = {
 	{ CLI_OPT_SWITCH, "quiet",       'q', &quiet,         1, NULL,                 "quiet" },
 	{ CLI_OPT_SWITCH, "no-checkout", 'n', &checkout,      0, NULL,                 "don't checkout HEAD" },
 	{ CLI_OPT_SWITCH, "bare",        0,   &bare,          1, NULL,                 "don't create a working directory" },
-	{ CLI_OPT_VALUE,  "branch",      'b', &branch,        0, "name",               "branch to check out",                 },
+	{ CLI_OPT_VALUE,  "branch",      'b', &branch,        0, "name",               "branch to check out" },
 	{ CLI_OPT_LITERAL },
 	{ CLI_OPT_ARG,    "repository",  0,   &remote_path,   0, "repository",         "repository path" },
 	{ CLI_OPT_ARG,    "directory",   0,   &local_path,    0, "directory",          "directory to clone into",             CLI_OPT_USAGE_REQUIRED },
