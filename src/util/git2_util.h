@@ -81,6 +81,7 @@
 #include "thread-utils.h"
 #include "integer.h"
 #include "errors.h"
+#include "global.h"
 
 #include "posix.h"
 
