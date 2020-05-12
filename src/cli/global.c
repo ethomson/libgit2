@@ -9,13 +9,14 @@
 #include <git2.h>
 #include <git2client.h>
 #include "git2_util.h"
+#include "runtime.h"
 #include "hash.h"
 #include "cli.h"
 
 static int client_init(void);
 static void client_shutdown(void);
 
-static git_global_init_fn cli_init_fn[] = {
+static git_runtime_init_fn cli_init_fn[] = {
 	client_init,
 	git_allocator_global_init,
 	git_hash_global_init,
@@ -30,7 +31,7 @@ static int client_init(void)
 	if (git_client_init() < 0)
 		return -1;
 
-	return git_global_shutdown_register(client_shutdown);
+	return git_runtime_shutdown_register(client_shutdown);
 }
 
 static void client_shutdown(void)
@@ -40,10 +41,10 @@ static void client_shutdown(void)
 
 int cli_global_init()
 {
-	return git_global_init(cli_init_fn);
+	return git_runtime_init(cli_init_fn);
 }
 
 int cli_global_shutdown()
 {
-	return git_global_shutdown();
+	return git_runtime_shutdown();
 }
