@@ -6,14 +6,14 @@
  */
 
 #include "git2_util.h"
-#include "global.h"
+#include "runtime.h"
 
-static git_global_shutdown_fn shutdown_callback[16];
+static git_runtime_shutdown_fn shutdown_callback[16];
 static git_atomic shutdown_callback_count;
 
 static git_atomic init_count;
 
-static int init_common(git_global_init_fn init_fns[])
+static int init_common(git_runtime_init_fn init_fns[])
 {
 	size_t i;
 	int ret;
@@ -30,19 +30,20 @@ static int init_common(git_global_init_fn init_fns[])
 
 static void shutdown_common(void)
 {
+	git_runtime_shutdown_fn cb;
 	int pos;
 
 	for (pos = git_atomic_get(&shutdown_callback_count);
 	     pos > 0;
 	     pos = git_atomic_dec(&shutdown_callback_count)) {
-		git_global_shutdown_fn cb = git__swap(shutdown_callback[pos - 1], NULL);
+		cb = git__swap(shutdown_callback[pos - 1], NULL);
 
 		if (cb != NULL)
 			cb();
 	}
 }
 
-int git_global_shutdown_register(git_global_shutdown_fn callback)
+int git_runtime_shutdown_register(git_runtime_shutdown_fn callback)
 {
 	int count = git_atomic_inc(&shutdown_callback_count);
 
@@ -62,7 +63,7 @@ int git_global_shutdown_register(git_global_shutdown_fn callback)
 
 static volatile LONG init_mutex = 0;
 
-int git_global_init(git_global_init_fn init_fns[])
+int git_runtime_init(git_runtime_init_fn init_fns[])
 {
 	int ret, error;
 
@@ -82,7 +83,7 @@ int git_global_init(git_global_init_fn init_fns[])
 	return ret;
 }
 
-int git_global_shutdown(void)
+int git_runtime_shutdown(void)
 {
 	int ret;
 
@@ -106,7 +107,7 @@ int git_global_shutdown(void)
 
 static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-int git_global_init(git_global_init_fn init_fns[])
+int git_runtime_init(git_runtime_init_fn init_fns[])
 {
 	int ret, error;
 
@@ -125,7 +126,7 @@ int git_global_init(git_global_init_fn init_fns[])
 	return ret;
 }
 
-int git_global_shutdown(void)
+int git_runtime_shutdown(void)
 {
 	int ret, error;
 
@@ -146,7 +147,7 @@ int git_global_shutdown(void)
 # error unknown threading model
 #else
 
-int git_global_init(git_global_init_fn init_fns[])
+int git_runtime_init(git_runtime_init_fn init_fns[])
 {
 	int ret, error;
 
@@ -159,7 +160,7 @@ int git_global_init(git_global_init_fn init_fns[])
 	return ret;
 }
 
-int git_global_shutdown(void)
+int git_runtime_shutdown(void)
 {
 	int ret;
 
