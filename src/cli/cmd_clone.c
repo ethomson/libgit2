@@ -10,6 +10,7 @@
 #include "cli.h"
 #include "cmd.h"
 #include "error.h"
+#include "signal.h"
 #include "progress.h"
 
 #include "path.h"
@@ -82,10 +83,8 @@ static void cleanup(void)
 		cli_die_git(NULL);
 }
 
-static void sighandler(int signum)
+static void interrupt_cleanup(void)
 {
-	GIT_UNUSED(signum);
-
 	cleanup();
 	exit(130);
 }
@@ -124,7 +123,7 @@ int cmd_clone(int argc, char **argv)
 
 	local_path_exists = validate_local_path(local_path);
 
-	signal(SIGINT, sighandler);
+	cli_signal_interrupt(interrupt_cleanup);
 
 	if (!local_path_exists &&
 	    git_futils_mkdir(local_path, 0777, 0) < 0)
