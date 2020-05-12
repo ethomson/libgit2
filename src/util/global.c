@@ -60,26 +60,11 @@ int git_global_shutdown_register(git_global_shutdown_fn callback)
 
 #if defined(GIT_THREADS) && defined(GIT_WIN32)
 
-static DWORD _fls_index;
 static volatile LONG init_mutex = 0;
-
-static int synchronized_threads_init(git_global_init_fn init_fns[])
-{
-	int error;
-
-	if ((_fls_index = FlsAlloc(fls_free)) == FLS_OUT_OF_INDEXES)
-		return -1;
-
-	if ((error = git_threads_init()) < 0 ||
-	    (error = init_common(init_fns)) < 0)
-		return error;
-
-	return 0;
-}
 
 int git_global_init(git_global_init_fn init_fns[])
 {
-	int ret;
+	int ret, error;
 
 	/* Enter the lock */
 	while (InterlockedCompareExchange(&init_mutex, 1, 0))
@@ -87,8 +72,8 @@ int git_global_init(git_global_init_fn init_fns[])
 
 	/* Only do work on a 0 -> 1 transition of the refcount */
 	if ((ret = git_atomic_inc(&init_count)) == 1) {
-		if (synchronized_threads_init() < 0)
-			ret = -1;
+		if ((error = init_common(init_fns)) < 0)
+			ret = error;
 	}
 
 	/* Exit the lock */
@@ -167,7 +152,7 @@ int git_global_init(git_global_init_fn init_fns[])
 
 	/* Only do work on a 0 -> 1 transition of the refcount */
 	if ((ret = git_atomic_inc(&init_count)) == 1) {
-		if ((error = init_common()) < 0)
+		if ((error = init_common(init_fns)) < 0)
 			ret = error;
 	}
 

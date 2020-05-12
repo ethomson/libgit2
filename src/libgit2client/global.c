@@ -17,6 +17,7 @@ static void libgit2_shutdown(void);
 static git_global_init_fn client_init_fn[] = {
 	libgit2_init,
 	git_allocator_global_init,
+	git_threads_global_init,
 	git_hash_global_init,
 	NULL
 };

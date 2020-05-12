@@ -19,6 +19,7 @@ static git_global_init_fn cli_init_fn[] = {
 	client_init,
 	git_allocator_global_init,
 	git_hash_global_init,
+	git_threads_global_init,
 	git_ssh_subtransport_register,
 	git_exec_filter_register,
 	NULL
