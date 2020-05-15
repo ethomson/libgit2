@@ -11,7 +11,7 @@
 
 #include <ctype.h>
 
-#include "global.h"
+#include "runtime.h"
 #include "settings.h"
 #include "posix.h"
 #include "stream.h"
@@ -286,7 +286,7 @@ int git_openssl_stream_global_init(void)
 	if (init_bio_method() < 0)
 		goto error;
 
-	git__on_shutdown(shutdown_ssl);
+	git_runtime_shutdown_register(shutdown_ssl);
 
 	return 0;
 
