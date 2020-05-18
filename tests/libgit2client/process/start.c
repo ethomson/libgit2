@@ -6,19 +6,26 @@
 # define SIGPIPE 42
 #endif
 
-static git_buf cat_bat = GIT_BUF_INIT;
-static git_buf pwd_bat = GIT_BUF_INIT;
+static git_buf helloworld_cmd = GIT_BUF_INIT;
+static git_buf cat_cmd = GIT_BUF_INIT;
+static git_buf pwd_cmd = GIT_BUF_INIT;
 
 void test_process_start__initialize(void)
 {
-	git_buf_printf(&cat_bat, "%s/cat.bat", cl_fixture("process"));
-	git_buf_printf(&pwd_bat, "%s/pwd.bat", cl_fixture("process"));
+#ifdef GIT_WIN32
+	git_buf_printf(&helloworld_cmd, "%s/helloworld.bat", cl_fixture("process"));
+	git_buf_printf(&cat_cmd, "%s/cat.bat", cl_fixture("process"));
+	git_buf_printf(&pwd_cmd, "%s/pwd.bat", cl_fixture("process"));
+#else
+	git_buf_printf(&helloworld_cmd, "%s/helloworld.sh", cl_fixture("process"));
+#endif
 }
 
 void test_process_start__cleanup(void)
 {
-	git_buf_dispose(&pwd_bat);
-	git_buf_dispose(&cat_bat);
+	git_buf_dispose(&pwd_cmd);
+	git_buf_dispose(&cat_cmd);
+	git_buf_dispose(&helloworld_cmd);
 }
 
 void test_process_start__returncode(void)
@@ -93,7 +100,7 @@ static void read_all(git_buf *out, git_process *process)
 void test_process_start__redirect_stdio(void)
 {
 #ifdef GIT_WIN32
-	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", cat_bat.ptr };
+	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", cat_cmd.ptr };
 #else
 	const char *args_array[] = { "/bin/cat" };
 #endif
@@ -128,7 +135,8 @@ void test_process_start__redirect_stdio(void)
 
 void test_process_start__catch_signal(void)
 {
-	const char *args_array[] = { "/bin/cat", "/etc/passwd" };
+#ifndef GIT_WIN32
+	const char *args_array[] = { helloworld_cmd.ptr };
 	git_strarray args = { (char **)args_array, ARRAY_SIZE(args_array) };
 
 	git_process *process;
@@ -147,12 +155,13 @@ void test_process_start__catch_signal(void)
 	cl_assert_equal_i(SIGPIPE, result.signal);
 
 	git_process_free(process);
+#endif
 }
 
 void test_process_start__can_chdir(void)
 {
 #ifdef GIT_WIN32
-	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", pwd_bat.ptr };
+	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", pwd_cmd.ptr };
 	char *startwd = "C:\\";
 #else
 	const char *args_array[] = { "/bin/pwd" };
@@ -190,7 +199,7 @@ void test_process_start__can_chdir(void)
 void test_process_start__cannot_chdir_to_nonexistent_dir(void)
 {
 #ifdef GIT_WIN32
-	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", pwd_bat.ptr };
+	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", pwd_cmd.ptr };
 	char *startwd = "C:\\a\\b\\z\\y\\not_found";
 #else
 	const char *args_array[] = { "/bin/pwd" };

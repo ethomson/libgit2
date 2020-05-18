@@ -2,11 +2,18 @@
 #include "process.h"
 #include "vector.h"
 
+static git_buf env_cmd = GIT_BUF_INIT;
 static git_buf accumulator = GIT_BUF_INIT;
 static git_vector env_result = GIT_VECTOR_INIT;
 
 void test_process_env__initialize(void)
 {
+#ifdef GIT_WIN32
+	git_buf_printf(&env_cmd, "%s/env.cmd", cl_fixture("process"));
+#else
+	git_buf_puts(&env_cmd, "/usr/bin/env");
+#endif
+
 	cl_git_pass(git_vector_init(&env_result, 32, git__strcmp_cb));
 }
 
@@ -14,12 +21,13 @@ void test_process_env__cleanup(void)
 {
 	git_vector_free(&env_result);
 	git_buf_dispose(&accumulator);
+	git_buf_dispose(&env_cmd);
 }
 
 static void run_env(const char **env_array, size_t env_len, bool exclude_env)
 {
-	const char *args_array[] = { "/usr/bin/env" };
-	git_strarray args = { (char **)args_array, 1 };
+	const char *args_array[] = { env_cmd.ptr };
+	git_strarray args = { (char **)args_array, ARRAY_SIZE(args_array) };
 	git_strarray env = { (char **)env_array, env_len };
 
 	git_process *process;
@@ -46,8 +54,24 @@ static void run_env(const char **env_array, size_t env_len, bool exclude_env)
 	cl_assert_equal_i(0, result.exitcode);
 	cl_assert_equal_i(0, result.signal);
 
-	for (tok = strtok(accumulator.ptr, "\n"); tok; tok = strtok(NULL, "\n"))
+	for (tok = strtok(accumulator.ptr, "\n"); tok; tok = strtok(NULL, "\n")) {
+#ifdef GIT_WIN32
+		if (strlen(tok) && tok[strlen(tok) - 1] == '\r')
+			tok[strlen(tok) - 1] = '\0';
+#endif
+
+		printf("--> %s <--\n", tok);
 		cl_git_pass(git_vector_insert(&env_result, tok));
+	}
+
+	size_t i;
+	char* el;
+	printf("vvvvvvvvv\n");
+	git_vector_foreach(&env_result, i, el) {
+	    printf("%s\n", el);
+	}
+	printf("--> %d\n", git_vector_search(NULL, &env_result, "TEST_NEW_ENV=added"));
+	printf("^^^^^^^^^^\n");
 
 	git_process_close(process);
 	git_process_free(process);
@@ -87,9 +111,13 @@ void test_process_env__can_clear_env(void)
 {
 	const char *env_array[] = { "TEST_NEW_ENV=added", "TEST_OTHER_ENV=also_added" };
 
+	cl_setenv("SOME_EXISTING_ENV", "propagated");
 	run_env(env_array, 2, true);
 
-	cl_assert_equal_i(2, env_result.length);
-	cl_assert_equal_s("TEST_NEW_ENV=added", env_result.contents[0]);
-	cl_assert_equal_s("TEST_OTHER_ENV=also_added", env_result.contents[1]);
+	/*
+	 * We can't simply test that the environment is precisely what we
+	 * provided.  Some systems (eg win32) will add environment variables
+	 * to all processes.
+	 */
+	cl_assert_equal_i(GIT_ENOTFOUND, git_vector_search(NULL, &env_result, "SOME_EXISTING_ENV=propagated"));
 }

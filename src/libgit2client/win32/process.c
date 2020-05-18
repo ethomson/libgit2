@@ -12,12 +12,12 @@
 #include "process.h"
 #include "git2/strarray.h"
 
-extern char **environ;
+#define ENV_MAX 32767
 
 struct git_process {
 	wchar_t *appname;
 	wchar_t *cmdline;
-	wchar_t **env;
+	wchar_t *env;
 
 	wchar_t *cwd;
 
@@ -33,27 +33,6 @@ struct git_process {
 
 	git_process_result_status status;
 };
-
-static int strarray_copy_with_null(git_strarray *out, git_strarray *in)
-{
-	size_t count;
-
-	if (!in)
-		return 0;
-
-	GIT_ERROR_CHECK_ALLOC_ADD(&count, in->count, 1);
-
-	out->strings = git__calloc(count, sizeof(char *));
-	GIT_ERROR_CHECK_ALLOC(out->strings);
-
-	if (git_strarray_copy_strings(out, in, in->count) < 0) {
-		git__free(out->strings);
-		return -1;
-	}
-
-	out->count = count;
-	return 0;
-}
 
 /*
  * Windows processes have a single command-line that is split by the
@@ -106,15 +85,76 @@ int git_process__cmdline(git_buf *out, git_strarray *in)
 	return git_buf_oom(out) ? -1 : 0;
 }
 
-static int merge_env(wchar_t ***out, git_strarray *in)
+GIT_INLINE(bool) is_delete_env(const char *env)
 {
-	wchar_t **env;
-	size_t env_len, i;
+	char *c = strchr(env, '=');
+
+	if (c == NULL)
+		return false;
+
+	return *(c+1) == '\0';
+}
+
+static int merge_env(wchar_t **out, git_strarray *in, bool exclude_env)
+{
+	git_buf merged = GIT_BUF_INIT;
+	wchar_t *in16 = NULL, *env = NULL, *e;
+	size_t e_len;
+	int ret = 0;
+	size_t i;
 
 	*out = NULL;
 
-	if (!in || !in->count)
-		return 0;
+	in16 = git__malloc(ENV_MAX);
+	GIT_ERROR_CHECK_ALLOC(in16);
+
+	for (i = 0; in && i < in->count; i++) {
+		if (is_delete_env(in->strings[i]))
+			continue;
+
+		if ((ret = git__utf8_to_16(in16, ENV_MAX, in->strings[i])) < 0)
+			goto done;
+
+		printf("%S %d\n", in16, ret);
+
+		git_buf_put(&merged, (const char *)in16, ret * 2);
+		git_buf_put(&merged, "\0\0", 2);
+	}
+
+	if (!opts || !opts->exclude_env) {
+		env = GetEnvironmentStringsW();
+
+		for (e = env; *e; e += (e_len + 1)) {
+			if (strarray_contains_env(in, e))
+				continue;
+
+			e_len = wcslen(e);
+
+			git_buf_put(&merged, (const char *)e, e_len * 2);
+			git_buf_put(&merged, "\0\0", 2);
+		}
+	}
+
+	git_buf_put(&merged, "\0\0", 2);
+
+
+
+	printf("---------------------------------\n");
+
+
+	e = (wchar_t *)merged.ptr;
+
+	while (*e) {
+		printf("%S\n", e);
+
+		e += (wcslen(e) + 1);
+	}
+
+
+	printf("---------------------------------\n");
+
+	/*
+
 
 	GIT_ERROR_CHECK_ALLOC_ADD(&env_len, in->count, 1);
 	env = git__calloc(env_len, sizeof(wchar_t *));
@@ -125,8 +165,24 @@ static int merge_env(wchar_t ***out, git_strarray *in)
 			return -1;
 	}
 
-	*out = env;
-	return 0;
+
+	for (i = 0; env[i]; i++) {
+		printf("%S\n", env[i]);
+	}
+
+	ret = git__utf8_to_16_alloc(out, merged.ptr);
+	*/
+
+	*out = (wchar_t *)git_buf_detach(&merged);
+
+done:
+	if (env)
+		FreeEnvironmentStringsW(env);
+
+	git_buf_dispose(&merged);
+	git__free(in16);
+
+	return ret < 0 ? -1 : 0;
 }
 
 int git_process_new(
@@ -161,7 +217,7 @@ int git_process_new(
 		goto done;
 	}
 
-	if (env && (error = merge_env(&process->env, env) < 0))
+	if (env && (error = merge_env(&process->env, env, opts && opts->exclude_env) < 0))
 		goto done;
 
 	if (opts) {
@@ -191,10 +247,6 @@ int git_process_start(git_process *process)
 	       out[2] = { NULL, NULL },
 	       err[2] = { NULL, NULL };
 
-	printf("app: %S\n", process->appname);
-	printf("cmdline: %S\n", process->cmdline);
-	process->env = NULL;
-
 	memset(&security_attrs, 0, sizeof(SECURITY_ATTRIBUTES));
 	security_attrs.bInheritHandle = TRUE;
 
@@ -207,7 +259,6 @@ int git_process_start(git_process *process)
 	if (process->capture_in) {
 		if (!CreatePipe(&in[0], &in[1], &security_attrs, 0) ||
 		    !SetHandleInformation(in[1], HANDLE_FLAG_INHERIT, 0)) {
-			printf("pipe in: %d\n", GetLastError());
 			git_error_set(GIT_ERROR_OS, "could not create pipe");
 			goto on_error;
 		}
@@ -219,7 +270,6 @@ int git_process_start(git_process *process)
 	if (process->capture_out) {
 		if (!CreatePipe(&out[0], &out[1], &security_attrs, 0) ||
 		    !SetHandleInformation(out[0], HANDLE_FLAG_INHERIT, 0)) {
-			printf("pipe out: %d\n", GetLastError());
 			git_error_set(GIT_ERROR_OS, "could not create pipe");
 			goto on_error;
 		}
@@ -231,7 +281,6 @@ int git_process_start(git_process *process)
 	if (process->capture_err) {
 		if (!CreatePipe(&err[0], &err[1], &security_attrs, 0) ||
 		    !SetHandleInformation(err[0], HANDLE_FLAG_INHERIT, 0)) {
-			printf("pipe err: %d\n", GetLastError());
 			git_error_set(GIT_ERROR_OS, "could not create pipe");
 			goto on_error;
 		}
@@ -247,7 +296,6 @@ int git_process_start(git_process *process)
 	                    process->cwd,
 	                    &startup_info,
 	                    &process->process_info)) {
-		printf("Meh: %d\n", GetLastError());
 		git_error_set(GIT_ERROR_OS, "could not create process");
 		goto on_error;
 	}
@@ -282,7 +330,6 @@ ssize_t git_process_read(git_process *process, void *buf, size_t count)
 		return -1;
 	}
 
-	printf("read file succeeded: %d\n", ret);
 	return ret;
 }
 
@@ -420,19 +467,13 @@ int git_process_result_msg(git_buf *out, git_process_result *result)
 
 void git_process_free(git_process *process)
 {
-	wchar_t **env;
-
 	if (!process)
 		return;
 
 	if (process->process_info.hProcess)
 		git_process_close(process);
 
-	for (env = process->env; env && *env; env++)
-		git__free(*env);
-
 	git__free(process->env);
-
 	git__free(process->cwd);
 	git__free(process->cmdline);
 	git__free(process->appname);
