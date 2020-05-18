@@ -60,8 +60,6 @@ static int progress_write(cli_progress *progress, bool force, git_buf *line)
 		}
 	}
 
-	git_buf_clear(&progress->deferred);
-
 	/*
 	 * If there's something on this line already (eg, a progress line
 	 * with only a trailing `\r` that we'll print over) then we need
@@ -90,6 +88,7 @@ static int progress_write(cli_progress *progress, bool force, git_buf *line)
 		progress->last_update = now;
 	}
 
+	git_buf_clear(&progress->deferred);
 	return git_buf_oom(&progress->onscreen) ? -1 : 0;
 }
 
@@ -117,10 +116,8 @@ int progress_printf(cli_progress *progress, bool force, const char *fmt, ...)
 
 static int progress_complete(cli_progress *progress)
 {
-	if (progress->deferred.size) {
-		printf("DEFERRED: %s\n", progress->deferred.ptr);
+	if (progress->deferred.size)
 		progress_write(progress, true, &progress->deferred);
-	}
 
 	if (progress->onscreen.size)
 		if (printf("\n") < 0)
