@@ -38,9 +38,9 @@ static void run_env(const char **env_array, size_t env_len, bool exclude_env)
 	while ((ret = git_process_read(process, buf, 1024)) > 0)
 		cl_git_pass(git_buf_put(&accumulator, buf, (size_t)ret));
 
-	cl_git_pass(ret);
+	cl_assert_equal_i(0, ret);
 
-	git_process_close(&result, process);
+	cl_git_pass(git_process_close(&result, process));
 
 	cl_assert_equal_i(GIT_PROCESS_STATUS_NORMAL, result.status);
 	cl_assert_equal_i(0, result.exitcode);

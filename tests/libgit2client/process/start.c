@@ -2,10 +2,34 @@
 #include "process.h"
 #include "vector.h"
 
+#ifndef SIGPIPE
+# define SIGPIPE 42
+#endif
+
+static git_buf cat_bat = GIT_BUF_INIT;
+static git_buf pwd_bat = GIT_BUF_INIT;
+
+void test_process_start__initialize(void)
+{
+	git_buf_printf(&cat_bat, "%s/cat.bat", cl_fixture("process"));
+	git_buf_printf(&pwd_bat, "%s/pwd.bat", cl_fixture("process"));
+}
+
+void test_process_start__cleanup(void)
+{
+	git_buf_dispose(&pwd_bat);
+	git_buf_dispose(&cat_bat);
+}
+
 void test_process_start__returncode(void)
 {
+#ifdef GIT_WIN32
+	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", "exit", "1" };
+#else
 	const char *args_array[] = { "/usr/bin/false" };
-	git_strarray args = { (char **)args_array, 1 };
+#endif
+
+	git_strarray args = { (char **)args_array, ARRAY_SIZE(args_array) };
 
 	git_process *process;
 	git_process_options opts = GIT_PROCESS_OPTIONS_INIT;
@@ -13,7 +37,7 @@ void test_process_start__returncode(void)
 
 	cl_git_pass(git_process_new(&process, &args, NULL, &opts));
 	cl_git_pass(git_process_start(process));
-	git_process_close(&result, process);
+	cl_git_pass(git_process_wait(&result, process));
 
 	cl_assert_equal_i(GIT_PROCESS_STATUS_NORMAL, result.status);
 	cl_assert_equal_i(1, result.exitcode);
@@ -24,8 +48,13 @@ void test_process_start__returncode(void)
 
 void test_process_start__not_found(void)
 {
+#ifdef GIT_WIN32
+	const char *args_array[] = { "C:\\a\\b\\z\\y\\not_found" };
+#else
 	const char *args_array[] = { "/a/b/z/y/not_found" };
-	git_strarray args = { (char **)args_array, 1 };
+#endif
+
+	git_strarray args = { (char **)args_array, ARRAY_SIZE(args_array) };
 
 	git_process *process;
 	git_process_options opts = GIT_PROCESS_OPTIONS_INIT;
@@ -35,15 +64,45 @@ void test_process_start__not_found(void)
 	git_process_free(process);
 }
 
+static void write_all(git_process *process, char *buf)
+{
+	size_t buf_len = strlen(buf);
+	ssize_t ret;
+
+	while (buf_len) {
+		ret = git_process_write(process, buf, buf_len);
+		cl_git_pass(ret < 0 ? (int)ret : 0);
+
+		buf += ret;
+		buf_len -= ret;
+	}
+}
+
+static void read_all(git_buf *out, git_process *process)
+{
+	char buf[32];
+	size_t buf_len = 32;
+	ssize_t ret;
+
+	while ((ret = git_process_read(process, buf, buf_len)) > 0)
+		cl_git_pass(git_buf_put(out, buf, ret));
+
+	cl_git_pass(ret < 0 ? (int)ret : 0);
+}
+
 void test_process_start__redirect_stdio(void)
 {
+#ifdef GIT_WIN32
+	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", cat_bat.ptr };
+#else
 	const char *args_array[] = { "/bin/cat" };
-	git_strarray args = { (char **)args_array, 1 };
+#endif
+	git_strarray args = { (char **)args_array, ARRAY_SIZE(args_array) };
 
 	git_process *process;
 	git_process_options opts = GIT_PROCESS_OPTIONS_INIT;
 	git_process_result result = GIT_PROCESS_RESULT_INIT;
-	char buf[14];
+	git_buf buf = GIT_BUF_INIT;
 
 	opts.capture_in = 1;
 	opts.capture_out = 1;
@@ -51,25 +110,26 @@ void test_process_start__redirect_stdio(void)
 	cl_git_pass(git_process_new(&process, &args, NULL, &opts));
 	cl_git_pass(git_process_start(process));
 
-	cl_assert_equal_i(13, git_process_write(process, "Hello, world.", 13));
-	cl_assert_equal_i(13, git_process_read(process, buf, 13));
+	write_all(process, "Hello, world.\r\nHello!\r\n");
+	cl_git_pass(git_process_close_in(process));
 
-	buf[13] = '\0';
-	cl_assert_equal_s("Hello, world.", buf);
+	read_all(&buf, process);
+	cl_assert_equal_s("Hello, world.\r\nHello!\r\n", buf.ptr);
 
-	git_process_close(&result, process);
+	cl_git_pass(git_process_wait(&result, process));
 
 	cl_assert_equal_i(GIT_PROCESS_STATUS_NORMAL, result.status);
 	cl_assert_equal_i(0, result.exitcode);
 	cl_assert_equal_i(0, result.signal);
 
+	git_buf_dispose(&buf);
 	git_process_free(process);
 }
 
 void test_process_start__catch_signal(void)
 {
 	const char *args_array[] = { "/bin/cat", "/etc/passwd" };
-	git_strarray args = { (char **)args_array, 2 };
+	git_strarray args = { (char **)args_array, ARRAY_SIZE(args_array) };
 
 	git_process *process;
 	git_process_options opts = GIT_PROCESS_OPTIONS_INIT;
@@ -79,7 +139,7 @@ void test_process_start__catch_signal(void)
 
 	cl_git_pass(git_process_new(&process, &args, NULL, &opts));
 	cl_git_pass(git_process_start(process));
-	git_process_close(&result, process);
+	cl_git_pass(git_process_wait(&result, process));
 
 	cl_assert_equal_i(GIT_PROCESS_STATUS_ERROR, result.status);
 	cl_assert_equal_i(0, result.exitcode);
@@ -90,43 +150,58 @@ void test_process_start__catch_signal(void)
 
 void test_process_start__can_chdir(void)
 {
+#ifdef GIT_WIN32
+	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", pwd_bat.ptr };
+	char *startwd = "C:\\";
+#else
 	const char *args_array[] = { "/bin/pwd" };
-	git_strarray args = { (char **)args_array, 1 };
+	char *startwd = "/";
+#endif
+
+	git_strarray args = { (char **)args_array, ARRAY_SIZE(args_array) };
 
 	git_process *process;
 	git_process_options opts = GIT_PROCESS_OPTIONS_INIT;
 	git_process_result result = GIT_PROCESS_RESULT_INIT;
-	char buf[32];
+	git_buf buf = GIT_BUF_INIT;
 
-	opts.cwd = "/";
+	opts.cwd = startwd;
 	opts.capture_out = 1;
 
 	cl_git_pass(git_process_new(&process, &args, NULL, &opts));
 	cl_git_pass(git_process_start(process));
 
-	cl_assert_equal_i(2, git_process_read(process, buf, 32));
+	read_all(&buf, process);
+	git_buf_rtrim(&buf);
 
-	buf[3] = '\0';
-	cl_assert_equal_s("/\n", buf);
+	cl_assert_equal_s(startwd, buf.ptr);
 
-	git_process_close(&result, process);
+	cl_git_pass(git_process_wait(&result, process));
 
 	cl_assert_equal_i(GIT_PROCESS_STATUS_NORMAL, result.status);
 	cl_assert_equal_i(0, result.exitcode);
 	cl_assert_equal_i(0, result.signal);
 
+	git_buf_dispose(&buf);
 	git_process_free(process);
 }
 
 void test_process_start__cannot_chdir_to_nonexistent_dir(void)
 {
+#ifdef GIT_WIN32
+	const char *args_array[] = { "C:\\Windows\\System32\\cmd.exe", "/c", pwd_bat.ptr };
+	char *startwd = "C:\\a\\b\\z\\y\\not_found";
+#else
 	const char *args_array[] = { "/bin/pwd" };
-	git_strarray args = { (char **)args_array, 1 };
+	char *startwd = "/a/b/z/y/not_found";
+#endif
+
+	git_strarray args = { (char **)args_array, ARRAY_SIZE(args_array) };
 
 	git_process *process;
 	git_process_options opts = GIT_PROCESS_OPTIONS_INIT;
 
-	opts.cwd = "/a/b/z/y/not_found";
+	opts.cwd = startwd;
 	opts.capture_out = 1;
 
 	cl_git_pass(git_process_new(&process, &args, NULL, &opts));

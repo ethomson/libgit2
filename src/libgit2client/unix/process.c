@@ -31,7 +31,7 @@ struct git_process {
 	int child_in;
 	int child_out;
 	int child_err;
-	int status;
+	git_process_result_status status;
 };
 
 static int strarray_copy_with_null(git_strarray *out, git_strarray *in)

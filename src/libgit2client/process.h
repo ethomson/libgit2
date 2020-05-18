@@ -35,6 +35,10 @@ typedef struct {
 
 #define GIT_PROCESS_OPTIONS_INIT {0}
 
+#ifdef GIT_WIN32
+extern int git_process__cmdline(git_buf *out, git_strarray *arg);
+#endif
+
 /**
  * Create a new process.  The command to run should be specified as the
  * element of the `arg` array.  If `setup_pipe` is true, then this
@@ -89,13 +93,41 @@ extern ssize_t git_process_read(git_process *process, void *buf, size_t count);
 extern ssize_t git_process_write(git_process *process, const void *buf, size_t count);
 
 /**
- * Wait for the process to finish and close any input/output pipes.
+ * Wait for the process to finish.
  *
  * @param result the result of the process or NULL
- * @param process the process to close
+ * @param process the process to wait on
  */
-extern int git_process_close(git_process_result *result, git_process *process);
+extern int git_process_wait(git_process_result *result, git_process *process);
 
+/**
+ * Close the input pipe from the child.
+ *
+ * @param process the process to close the pipe on
+ */
+extern int git_process_close_in(git_process *process);
+
+/**
+ * Close the output pipe from the child.
+ *
+ * @param process the process to close the pipe on
+ */
+extern int git_process_close_out(git_process *process);
+
+/**
+ * Close the error pipe from the child.
+ *
+ * @param process the process to close the pipe on
+ */
+extern int git_process_close_err(git_process *process);
+
+/**
+ * Close all resources that are used by the process.  This does not
+ * wait for the process to complete.
+ *
+ * @parma process the process to close
+ */
+extern int git_process_close(git_process *process);
 
 /**
  * Place a human-readable error message in the given git buffer.
