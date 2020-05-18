@@ -131,7 +131,7 @@ static int exec_filter_stream_close(git_writestream *s)
 		}
 	}
 
-	if ((error = git_process_close(&result, stream->process)) < 0)
+	if ((error = git_process_wait(&result, stream->process)) < 0)
 		goto done;
 
 	if (result.status != GIT_PROCESS_STATUS_NORMAL || result.exitcode) {
