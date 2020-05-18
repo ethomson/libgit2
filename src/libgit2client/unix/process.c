@@ -425,7 +425,50 @@ ssize_t git_process_write(git_process *process, const void *buf, size_t count)
 	return ret;
 }
 
-int git_process_close(git_process_result *result, git_process *process)
+int git_process_close_in(git_process *process)
+{
+	if (!process->capture_in) {
+		git_error_set(GIT_ERROR_INVALID, "input is not open");
+		return -1;
+	}
+
+	CLOSE_FD(process->child_in);
+	return 0;
+}
+
+int git_process_close_out(git_process *process)
+{
+	if (!process->capture_out) {
+		git_error_set(GIT_ERROR_INVALID, "output is not open");
+		return -1;
+	}
+
+	CLOSE_FD(process->child_out);
+	return 0;
+}
+
+int git_process_close_err(git_process *process)
+{
+	if (!process->capture_err) {
+		git_error_set(GIT_ERROR_INVALID, "error is not open");
+		return -1;
+	}
+
+	CLOSE_FD(process->child_err);
+	return 0;
+}
+
+int git_process_close(git_process *process)
+{
+	CLOSE_FD(process->child_in);
+	CLOSE_FD(process->child_out);
+	CLOSE_FD(process->child_err);
+	CLOSE_FD(process->status);
+
+	return 0;
+}
+
+int git_process_wait(git_process_result *result, git_process *process)
 {
 	int state;
 
@@ -437,13 +480,7 @@ int git_process_close(git_process_result *result, git_process *process)
 		return -1;
 	}
 
-	CLOSE_FD(process->child_in);
-	CLOSE_FD(process->child_out);
-	CLOSE_FD(process->child_err);
-	CLOSE_FD(process->status);
-
 	waitpid(process->pid, &state, 0);
-
 	process->pid = 0;
 
 	if (result) {
@@ -482,7 +519,7 @@ void git_process_free(git_process *process)
 		return;
 
 	if (process->pid)
-		git_process_close(NULL, process);
+		git_process_close(process);
 
 	git__free(process->cwd);
 	git_strarray_free(&process->arg);

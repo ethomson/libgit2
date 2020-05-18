@@ -40,7 +40,7 @@ static void run_env(const char **env_array, size_t env_len, bool exclude_env)
 
 	cl_assert_equal_i(0, ret);
 
-	cl_git_pass(git_process_close(&result, process));
+	cl_git_pass(git_process_wait(&result, process));
 
 	cl_assert_equal_i(GIT_PROCESS_STATUS_NORMAL, result.status);
 	cl_assert_equal_i(0, result.exitcode);
@@ -49,6 +49,7 @@ static void run_env(const char **env_array, size_t env_len, bool exclude_env)
 	for (tok = strtok(accumulator.ptr, "\n"); tok; tok = strtok(NULL, "\n"))
 		cl_git_pass(git_vector_insert(&env_result, tok));
 
+	git_process_close(process);
 	git_process_free(process);
 }
 

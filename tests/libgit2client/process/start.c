@@ -139,6 +139,7 @@ void test_process_start__catch_signal(void)
 
 	cl_git_pass(git_process_new(&process, &args, NULL, &opts));
 	cl_git_pass(git_process_start(process));
+	cl_git_pass(git_process_close(process));
 	cl_git_pass(git_process_wait(&result, process));
 
 	cl_assert_equal_i(GIT_PROCESS_STATUS_ERROR, result.status);
