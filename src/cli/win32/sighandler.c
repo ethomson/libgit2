@@ -20,8 +20,17 @@ static BOOL interrupt_proxy(DWORD signal)
 
 int cli_sighandler_set_interrupt(void (*handler)(void))
 {
+	BOOL result;
+
 	if ((interrupt_handler = handler) != NULL)
-		SetConsoleCtrlHandler(interrupt_proxy, FALSE);
+		result = SetConsoleCtrlHandler(interrupt_proxy, FALSE);
 	else
-		SetConsoleCtrlHandler(NULL, FALSE);
+		result = SetConsoleCtrlHandler(NULL, FALSE);
+
+	if (!result) {
+		git_error_set(GIT_ERROR_CLIENT, "could not set control control handler");
+		return -1;
+	}
+
+	return 0;
 }
