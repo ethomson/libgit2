@@ -4,15 +4,15 @@
 
 int cli_console_coords(int *cols, int *rows, int fd)
 {
-	HANDLE handle;
+	intptr_t handle;
 	CONSOLE_SCREEN_BUFFER_INFO info;
 
-	if ((handle = _get_osfhandle(fd)) == -1) {
+	if ((handle = (intptr_t)_get_osfhandle(fd)) == -1) {
 		git_error_set(GIT_ERROR_OS, "failed to get handle for file descriptor");
 		return -1;
 	}
 
-	if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
+	if (!GetConsoleScreenBufferInfo((HANDLE)handle, &info)) {
 		git_error_set(GIT_ERROR_OS, "failed to query screen buffer");
 		return -1;
 	}
