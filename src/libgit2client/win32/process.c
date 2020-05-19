@@ -95,33 +95,6 @@ GIT_INLINE(bool) is_delete_env(const char *env)
 	return *(c+1) == '\0';
 }
 
-static bool strarray_contains_prefix(
-	git_strarray *array,
-	const char *str,
-	size_t n)
-{
-	size_t i;
-
-	for (i = 0; i < array->count; i++) {
-		if (strncmp(array->strings[i], str, n) == 0)
-			return true;
-	}
-
-	return false;
-}
-
-static bool strarray_contains_env(git_strarray *array, const char *env)
-{
-	const char *c;
-
-	for (c = env; *c; c++) {
-		if (*c == '=')
-			break;
-	}
-
-	return *c ? strarray_contains_prefix(array, env, (c - env)) : false;
-}
-
 static int merge_env(wchar_t **out, git_strarray *in, bool exclude_env)
 {
 	git_buf merged = GIT_BUF_INIT;
@@ -146,8 +119,6 @@ static int merge_env(wchar_t **out, git_strarray *in, bool exclude_env)
 		if ((ret = git__utf8_to_16(in16, ENV_MAX, in->strings[i])) < 0)
 			goto done;
 
-		printf("%S %d\n", in16, ret);
-
 		git_buf_put(&merged, (const char *)in16, ret * 2);
 		git_buf_put(&merged, "\0\0", 2);
 	}
@@ -161,7 +132,7 @@ static int merge_env(wchar_t **out, git_strarray *in, bool exclude_env)
 			if ((ret = git__utf16_to_8(e8, ENV_MAX, e)) < 0)
 				goto done;
 
-			if (strarray_contains_env(in, e8))
+			if (git_strarray_contains_key(in, e8, '='))
 				continue;
 
 			git_buf_put(&merged, (const char *)e, e_len * 2);
@@ -170,42 +141,6 @@ static int merge_env(wchar_t **out, git_strarray *in, bool exclude_env)
 	}
 
 	git_buf_put(&merged, "\0\0", 2);
-
-
-
-	printf("---------------------------------\n");
-
-
-	e = (wchar_t *)merged.ptr;
-
-	while (*e) {
-		printf("%S\n", e);
-
-		e += (wcslen(e) + 1);
-	}
-
-
-	printf("---------------------------------\n");
-
-	/*
-
-
-	GIT_ERROR_CHECK_ALLOC_ADD(&env_len, in->count, 1);
-	env = git__calloc(env_len, sizeof(wchar_t *));
-	GIT_ERROR_CHECK_ALLOC(env);
-
-	for (i = 0; i < in->count; i++) {
-		if (git__utf8_to_16_alloc(&env[i], in->strings[i]) < 0)
-			return -1;
-	}
-
-
-	for (i = 0; env[i]; i++) {
-		printf("%S\n", env[i]);
-	}
-
-	ret = git__utf8_to_16_alloc(out, merged.ptr);
-	*/
 
 	*out = (wchar_t *)git_buf_detach(&merged);
 

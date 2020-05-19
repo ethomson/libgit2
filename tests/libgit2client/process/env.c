@@ -60,18 +60,8 @@ static void run_env(const char **env_array, size_t env_len, bool exclude_env)
 			tok[strlen(tok) - 1] = '\0';
 #endif
 
-		printf("--> %s <--\n", tok);
 		cl_git_pass(git_vector_insert(&env_result, tok));
 	}
-
-	size_t i;
-	char* el;
-	printf("vvvvvvvvv\n");
-	git_vector_foreach(&env_result, i, el) {
-	    printf("%s\n", el);
-	}
-	printf("--> %d\n", git_vector_search(NULL, &env_result, "TEST_NEW_ENV=added"));
-	printf("^^^^^^^^^^\n");
 
 	git_process_close(process);
 	git_process_free(process);

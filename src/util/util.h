@@ -349,6 +349,29 @@ extern size_t git__utf8_valid_buf_length(const uint8_t *str, size_t str_len);
 extern int git_strarray_copy_strings(
 	git_strarray *tgt, const git_strarray *src, size_t n);
 
+/**
+ * Examines the strings in the given strarray for a particular prefix.
+ *
+ * @param array The array to search
+ * @param str The string prefix to search for
+ * @param n The size of the string prefix
+ * @return true if found, false otherwise
+ */
+extern bool git_strarray_contains_prefix(
+	git_strarray *array, const char *str, size_t n);
+
+/**
+ * Examines the strings in the given strarray for a particular key,
+ * ending in the given delimiter.
+ *
+ * @param array The array to search
+ * @param key The key to search for
+ * @param delimiter The key/value delimiter character in strings
+ * @return true if found, false otherwise
+ */
+extern bool git_strarray_contains_key(
+	git_strarray *array, const char *str, char delimiter);
+
 /*
  * Safely zero-out memory, making sure that the compiler
  * doesn't optimize away the operation.

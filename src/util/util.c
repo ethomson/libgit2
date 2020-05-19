@@ -44,6 +44,36 @@ int git_strarray_copy_strings(git_strarray *tgt, const git_strarray *src, size_t
 	return 0;
 }
 
+bool git_strarray_contains_prefix(
+	git_strarray *array,
+	const char *str,
+	size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < array->count; i++) {
+		if (strncmp(array->strings[i], str, n) == 0)
+			return true;
+	}
+
+	return false;
+}  
+
+bool git_strarray_contains_key(
+	git_strarray *array,
+	const char *key,
+	char delimiter)
+{
+	const char *c;
+
+	for (c = key; *c; c++) {
+		if (*c == delimiter)
+			break;
+	}
+
+	return *c ? git_strarray_contains_prefix(array, key, (c - key)) : false;
+}
+
 int git__strntol64(int64_t *result, const char *nptr, size_t nptr_len, const char **endptr, int base)
 {
 	const char *p;
