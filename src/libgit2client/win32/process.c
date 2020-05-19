@@ -95,18 +95,49 @@ GIT_INLINE(bool) is_delete_env(const char *env)
 	return *(c+1) == '\0';
 }
 
+static bool strarray_contains_prefix(
+	git_strarray *array,
+	const char *str,
+	size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < array->count; i++) {
+		if (strncmp(array->strings[i], str, n) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+static bool strarray_contains_env(git_strarray *array, const char *env)
+{
+	const char *c;
+
+	for (c = env; *c; c++) {
+		if (*c == '=')
+			break;
+	}
+
+	return *c ? strarray_contains_prefix(array, env, (c - env)) : false;
+}
+
 static int merge_env(wchar_t **out, git_strarray *in, bool exclude_env)
 {
 	git_buf merged = GIT_BUF_INIT;
 	wchar_t *in16 = NULL, *env = NULL, *e;
+	char *e8 = NULL;
 	size_t e_len;
 	int ret = 0;
 	size_t i;
 
 	*out = NULL;
 
-	in16 = git__malloc(ENV_MAX);
+	in16 = git__malloc(ENV_MAX * sizeof(wchar_t));
 	GIT_ERROR_CHECK_ALLOC(in16);
+
+	e8 = git__malloc(ENV_MAX);
+	GIT_ERROR_CHECK_ALLOC(e8);
 
 	for (i = 0; in && i < in->count; i++) {
 		if (is_delete_env(in->strings[i]))
@@ -121,14 +152,17 @@ static int merge_env(wchar_t **out, git_strarray *in, bool exclude_env)
 		git_buf_put(&merged, "\0\0", 2);
 	}
 
-	if (!opts || !opts->exclude_env) {
+	if (!exclude_env) {
 		env = GetEnvironmentStringsW();
 
 		for (e = env; *e; e += (e_len + 1)) {
-			if (strarray_contains_env(in, e))
-				continue;
-
 			e_len = wcslen(e);
+
+			if ((ret = git__utf16_to_8(e8, ENV_MAX, e)) < 0)
+				goto done;
+
+			if (strarray_contains_env(in, e8))
+				continue;
 
 			git_buf_put(&merged, (const char *)e, e_len * 2);
 			git_buf_put(&merged, "\0\0", 2);
@@ -180,6 +214,7 @@ done:
 		FreeEnvironmentStringsW(env);
 
 	git_buf_dispose(&merged);
+	git__free(e8);
 	git__free(in16);
 
 	return ret < 0 ? -1 : 0;
