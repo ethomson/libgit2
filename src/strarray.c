@@ -40,7 +40,7 @@ int git_strarray_copy(git_strarray *tgt, const git_strarray *src)
 	return 0;
 }
 
-void git_strarray_free(git_strarray *array)
+void git_strarray_dispose(git_strarray *array)
 {
 	size_t i;
 
@@ -53,4 +53,9 @@ void git_strarray_free(git_strarray *array)
 	git__free(array->strings);
 
 	memset(array, 0, sizeof(*array));
+}
+
+void git_strarray_free(git_strarray *array)
+{
+	git_strarray_dispose(array);
 }
