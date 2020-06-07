@@ -18,11 +18,14 @@
       <div id="jump_page">
         <a class="source" href="../../#HEAD">API Docs</a>
           <a class="source" href="add.html">add.c</a>
+          <a class="source" href="args.html">args.c</a>
           <a class="source" href="blame.html">blame.c</a>
           <a class="source" href="cat-file.html">cat-file.c</a>
           <a class="source" href="checkout.html">checkout.c</a>
           <a class="source" href="clone.html">clone.c</a>
+          <a class="source" href="commit.html">commit.c</a>
           <a class="source" href="common.html">common.c</a>
+          <a class="source" href="config.html">config.c</a>
           <a class="source" href="describe.html">describe.c</a>
           <a class="source" href="diff.html">diff.c</a>
           <a class="source" href="fetch.html">fetch.c</a>
@@ -35,10 +38,12 @@
           <a class="source" href="ls-files.html">ls-files.c</a>
           <a class="source" href="ls-remote.html">ls-remote.c</a>
           <a class="source" href="merge.html">merge.c</a>
+          <a class="source" href="push.html">push.c</a>
           <a class="source" href="remote.html">remote.c</a>
           <a class="source" href="rev-list.html">rev-list.c</a>
           <a class="source" href="rev-parse.html">rev-parse.c</a>
           <a class="source" href="show-index.html">show-index.c</a>
+          <a class="source" href="stash.html">stash.c</a>
           <a class="source" href="status.html">status.c</a>
           <a class="source" href="tag.html">tag.c</a>
       </div>
@@ -60,7 +65,7 @@
         
       </td>
       <td class=code>
-        <div class='highlight'><pre><span class="cm">/*</span>
+        <div class='highlight'><pre><span></span><span class="cm">/*</span>
 <span class="cm"> * libgit2 &quot;general&quot; example - shows basic libgit2 concepts</span>
 <span class="cm"> *</span>
 <span class="cm"> * Written by the libgit2 contributors</span>
@@ -99,7 +104,7 @@ Git Internals that you will need to know to work with Git at this level,
 check out <a href="https://git-scm.com/book/en/v2/Git-Internals-Plumbing-and-Porcelain">Chapter 10</a> of the Pro Git book.</p>
       </td>
       <td class=code>
-        <div class='highlight'><pre></pre></div>
+        <div class='highlight'><pre><span class="cp">#include</span> <span class="cpf">&quot;common.h&quot;</span><span class="cp"></span></pre></div>
       </td>
     </tr>
     <tr id='section-Includes'>
@@ -114,9 +119,7 @@ that you need.  It should be the only thing you need to include in order
 to compile properly and get all the libgit2 API.</p>
       </td>
       <td class=code>
-        <div class='highlight'><pre><span class="cp">#include &lt;git2.h&gt;</span>
-<span class="cp">#include &lt;stdio.h&gt;</span>
-<span class="cp">#include &lt;string.h&gt;</span>
+        <div class='highlight'><pre><span class="cp">#include</span> <span class="cpf">&quot;git2.h&quot;</span><span class="cp"></span>
 
 <span class="k">static</span> <span class="kt">void</span> <span class="nf">oid_parsing</span><span class="p">(</span><span class="n">git_oid</span> <span class="o">*</span><span class="n">out</span><span class="p">);</span>
 <span class="k">static</span> <span class="kt">void</span> <span class="nf">object_database</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="n">git_oid</span> <span class="o">*</span><span class="n">oid</span><span class="p">);</span>
@@ -305,7 +308,7 @@ repository.</p>
   <span class="kt">int</span> <span class="n">error</span><span class="p">;</span>
   <span class="n">git_odb_object</span> <span class="o">*</span><span class="n">obj</span><span class="p">;</span>
   <span class="n">git_odb</span> <span class="o">*</span><span class="n">odb</span><span class="p">;</span>
-  <span class="kt">git_object_t</span> <span class="n">otype</span><span class="p">;</span>
+  <span class="n">git_object_t</span> <span class="n">otype</span><span class="p">;</span>
 
   <span class="n"><a name="git_repository_odb-72" class="fnlink" href="../../#HEAD/group/repository/git_repository_odb">git_repository_odb</a></span><span class="p">(</span><span class="o">&amp;</span><span class="n">odb</span><span class="p">,</span> <span class="n">repo</span><span class="p">);</span></pre></div>
       </td>
@@ -655,7 +658,7 @@ methods, since the objects themselves are very similar.</p>
         <div class='highlight'><pre><span class="k">static</span> <span class="kt">void</span> <span class="nf">tag_parsing</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">)</span>
 <span class="p">{</span>
   <span class="n">git_commit</span> <span class="o">*</span><span class="n">commit</span><span class="p">;</span>
-  <span class="kt">git_object_t</span> <span class="n">type</span><span class="p">;</span>
+  <span class="n">git_object_t</span> <span class="n">type</span><span class="p">;</span>
   <span class="n">git_tag</span> <span class="o">*</span><span class="n">tag</span><span class="p">;</span>
   <span class="n">git_oid</span> <span class="n">oid</span><span class="p">;</span>
   <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">name</span><span class="p">,</span> <span class="o">*</span><span class="n">message</span><span class="p">;</span>
@@ -959,7 +962,7 @@ the Git index file (sometimes thought of as the staging area).</p>
         <div class='highlight'><pre><span class="k">static</span> <span class="kt">void</span> <span class="nf">index_walking</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">)</span>
 <span class="p">{</span>
   <span class="n">git_index</span> <span class="o">*</span><span class="n">index</span><span class="p">;</span>
-  <span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">i</span><span class="p">,</span> <span class="n">ecount</span><span class="p">;</span>
+  <span class="kt">size_t</span> <span class="n">i</span><span class="p">,</span> <span class="n">ecount</span><span class="p">;</span>
 
   <span class="n">printf</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">*Index Walking*</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span></pre></div>
       </td>
@@ -1063,7 +1066,7 @@ one at a time and resolve them to the SHA, then print both values out.</p>
     <span class="n"><a name="git_reference_free-67" class="fnlink" href="../../#HEAD/group/reference/git_reference_free">git_reference_free</a></span><span class="p">(</span><span class="n">ref</span><span class="p">);</span>
   <span class="p">}</span>
 
-  <span class="n"><a name="git_strarray_free-83" class="fnlink" href="../../#HEAD/group/strarray/git_strarray_free">git_strarray_free</a></span><span class="p">(</span><span class="o">&amp;</span><span class="n">ref_list</span><span class="p">);</span>
+  <span class="n"><a name="git_strarray_dispose-83" class="fnlink" href="../../#HEAD/group/strarray/git_strarray_dispose">git_strarray_dispose</a></span><span class="p">(</span><span class="o">&amp;</span><span class="n">ref_list</span><span class="p">);</span>
 <span class="p">}</span></pre></div>
       </td>
     </tr>

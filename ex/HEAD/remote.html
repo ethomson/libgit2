@@ -18,11 +18,14 @@
       <div id="jump_page">
         <a class="source" href="../../#HEAD">API Docs</a>
           <a class="source" href="add.html">add.c</a>
+          <a class="source" href="args.html">args.c</a>
           <a class="source" href="blame.html">blame.c</a>
           <a class="source" href="cat-file.html">cat-file.c</a>
           <a class="source" href="checkout.html">checkout.c</a>
           <a class="source" href="clone.html">clone.c</a>
+          <a class="source" href="commit.html">commit.c</a>
           <a class="source" href="common.html">common.c</a>
+          <a class="source" href="config.html">config.c</a>
           <a class="source" href="describe.html">describe.c</a>
           <a class="source" href="diff.html">diff.c</a>
           <a class="source" href="fetch.html">fetch.c</a>
@@ -35,10 +38,12 @@
           <a class="source" href="ls-files.html">ls-files.c</a>
           <a class="source" href="ls-remote.html">ls-remote.c</a>
           <a class="source" href="merge.html">merge.c</a>
+          <a class="source" href="push.html">push.c</a>
           <a class="source" href="remote.html">remote.c</a>
           <a class="source" href="rev-list.html">rev-list.c</a>
           <a class="source" href="rev-parse.html">rev-parse.c</a>
           <a class="source" href="show-index.html">show-index.c</a>
+          <a class="source" href="stash.html">stash.c</a>
           <a class="source" href="status.html">status.c</a>
           <a class="source" href="tag.html">tag.c</a>
       </div>
@@ -60,7 +65,7 @@
         
       </td>
       <td class=code>
-        <div class='highlight'><pre><span class="cm">/*</span>
+        <div class='highlight'><pre><span></span><span class="cm">/*</span>
 <span class="cm"> * libgit2 &quot;remote&quot; example - shows how to modify remotes for a repo</span>
 <span class="cm"> *</span>
 <span class="cm"> * Written by the libgit2 contributors</span>
@@ -74,7 +79,7 @@
 <span class="cm"> * &lt;http://creativecommons.org/publicdomain/zero/1.0/&gt;.</span>
 <span class="cm"> */</span>
 
-<span class="cp">#include &quot;common.h&quot;</span></pre></div>
+<span class="cp">#include</span> <span class="cpf">&quot;common.h&quot;</span><span class="cp"></span></pre></div>
       </td>
     </tr>
     <tr id='section-2'>
@@ -98,7 +103,7 @@ program is emulating.</p>
   <span class="n">subcmd_show</span><span class="p">,</span>
 <span class="p">};</span>
 
-<span class="k">struct</span> <span class="n">opts</span> <span class="p">{</span>
+<span class="k">struct</span> <span class="n">remote_opts</span> <span class="p">{</span>
   <span class="k">enum</span> <span class="n">subcmd</span> <span class="n">cmd</span><span class="p">;</span>
 
   <span class="cm">/* for command-specific args */</span>
@@ -106,20 +111,20 @@ program is emulating.</p>
   <span class="kt">char</span> <span class="o">**</span><span class="n">argv</span><span class="p">;</span>
 <span class="p">};</span>
 
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_add</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_remove</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_rename</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_seturl</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_show</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_add</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_remove</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_rename</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_seturl</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_show</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">);</span>
 
 <span class="k">static</span> <span class="kt">void</span> <span class="nf">parse_subcmd</span><span class="p">(</span>
-  <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">opt</span><span class="p">,</span> <span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">**</span><span class="n">argv</span><span class="p">);</span>
+  <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">opt</span><span class="p">,</span> <span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">**</span><span class="n">argv</span><span class="p">);</span>
 <span class="k">static</span> <span class="kt">void</span> <span class="nf">usage</span><span class="p">(</span><span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">msg</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">arg</span><span class="p">);</span>
 
 <span class="kt">int</span> <span class="nf">lg2_remote</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">*</span><span class="n">argv</span><span class="p">[])</span>
 <span class="p">{</span>
   <span class="kt">int</span> <span class="n">retval</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
-  <span class="k">struct</span> <span class="n">opts</span> <span class="n">opt</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">};</span>
+  <span class="k">struct</span> <span class="n">remote_opts</span> <span class="n">opt</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">};</span>
 
   <span class="n">parse_subcmd</span><span class="p">(</span><span class="o">&amp;</span><span class="n">opt</span><span class="p">,</span> <span class="n">argc</span><span class="p">,</span> <span class="n">argv</span><span class="p">);</span>
 
@@ -145,7 +150,7 @@ program is emulating.</p>
   <span class="k">return</span> <span class="n">retval</span><span class="p">;</span>
 <span class="p">}</span>
 
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_add</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_add</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
 <span class="p">{</span>
   <span class="kt">char</span> <span class="o">*</span><span class="n">name</span><span class="p">,</span> <span class="o">*</span><span class="n">url</span><span class="p">;</span>
   <span class="n">git_remote</span> <span class="o">*</span><span class="n">remote</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">};</span>
@@ -162,7 +167,7 @@ program is emulating.</p>
   <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
 <span class="p">}</span>
 
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_remove</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_remove</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
 <span class="p">{</span>
   <span class="kt">char</span> <span class="o">*</span><span class="n">name</span><span class="p">;</span>
 
@@ -177,7 +182,7 @@ program is emulating.</p>
   <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
 <span class="p">}</span>
 
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_rename</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_rename</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
 <span class="p">{</span>
   <span class="kt">int</span> <span class="n">i</span><span class="p">,</span> <span class="n">retval</span><span class="p">;</span>
   <span class="kt">char</span> <span class="o">*</span><span class="n">old</span><span class="p">,</span> <span class="o">*</span><span class="n">new</span><span class="p">;</span>
@@ -197,12 +202,12 @@ program is emulating.</p>
     <span class="n">puts</span><span class="p">(</span><span class="n">problems</span><span class="p">.</span><span class="n">strings</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
   <span class="p">}</span>
 
-  <span class="n"><a name="git_strarray_free-11" class="fnlink" href="../../#HEAD/group/strarray/git_strarray_free">git_strarray_free</a></span><span class="p">(</span><span class="o">&amp;</span><span class="n">problems</span><span class="p">);</span>
+  <span class="n"><a name="git_strarray_dispose-11" class="fnlink" href="../../#HEAD/group/strarray/git_strarray_dispose">git_strarray_dispose</a></span><span class="p">(</span><span class="o">&amp;</span><span class="n">problems</span><span class="p">);</span>
 
   <span class="k">return</span> <span class="n">retval</span><span class="p">;</span>
 <span class="p">}</span>
 
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_seturl</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_seturl</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
 <span class="p">{</span>
   <span class="kt">int</span> <span class="n">i</span><span class="p">,</span> <span class="n">retval</span><span class="p">,</span> <span class="n">push</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
   <span class="kt">char</span> <span class="o">*</span><span class="n">name</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">,</span> <span class="o">*</span><span class="n">url</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
@@ -234,7 +239,7 @@ program is emulating.</p>
   <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
 <span class="p">}</span>
 
-<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_show</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">cmd_show</span><span class="p">(</span><span class="n">git_repository</span> <span class="o">*</span><span class="n">repo</span><span class="p">,</span> <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span>
 <span class="p">{</span>
   <span class="kt">int</span> <span class="n">i</span><span class="p">;</span>
   <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">arg</span><span class="p">,</span> <span class="o">*</span><span class="n">name</span><span class="p">,</span> <span class="o">*</span><span class="n">fetch</span><span class="p">,</span> <span class="o">*</span><span class="n">push</span><span class="p">;</span>
@@ -275,13 +280,13 @@ program is emulating.</p>
     <span class="n"><a name="git_remote_free-7" class="fnlink" href="../../#HEAD/group/remote/git_remote_free">git_remote_free</a></span><span class="p">(</span><span class="n">remote</span><span class="p">);</span>
   <span class="p">}</span>
 
-  <span class="n"><a name="git_strarray_free-12" class="fnlink" href="../../#HEAD/group/strarray/git_strarray_free">git_strarray_free</a></span><span class="p">(</span><span class="o">&amp;</span><span class="n">remotes</span><span class="p">);</span>
+  <span class="n"><a name="git_strarray_dispose-12" class="fnlink" href="../../#HEAD/group/strarray/git_strarray_dispose">git_strarray_dispose</a></span><span class="p">(</span><span class="o">&amp;</span><span class="n">remotes</span><span class="p">);</span>
 
   <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
 <span class="p">}</span>
 
 <span class="k">static</span> <span class="kt">void</span> <span class="nf">parse_subcmd</span><span class="p">(</span>
-  <span class="k">struct</span> <span class="n">opts</span> <span class="o">*</span><span class="n">opt</span><span class="p">,</span> <span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">**</span><span class="n">argv</span><span class="p">)</span>
+  <span class="k">struct</span> <span class="n">remote_opts</span> <span class="o">*</span><span class="n">opt</span><span class="p">,</span> <span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">**</span><span class="n">argv</span><span class="p">)</span>
 <span class="p">{</span>
   <span class="kt">char</span> <span class="o">*</span><span class="n">arg</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span>
   <span class="k">enum</span> <span class="n">subcmd</span> <span class="n">cmd</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
