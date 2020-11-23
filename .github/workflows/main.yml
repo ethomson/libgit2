@@ -207,41 +207,6 @@ jobs:
             CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DDEPRECATE_HARD=ON -DUSE_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON
             RUN_INVASIVE_TESTS: true
           os: ubuntu-latest
-        - # Bionic, x86, GCC, OpenSSL
-          container:
-            name: bionic-x86
-            dockerfile: bionic
-            qemu: true
-          env:
-            CC: gcc
-            CMAKE_GENERATOR: Ninja
-            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DDEPRECATE_HARD=ON -DUSE_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON
-            RUN_INVASIVE_TESTS: true
-          os: ubuntu-latest
-        - # Bionic, arm32, GCC, OpenSSL
-          container:
-            name: bionic-arm32
-            dockerfile: bionic
-            qemu: true
-          env:
-            CC: gcc
-            CMAKE_GENERATOR: Ninja
-            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON
-            RUN_INVASIVE_TESTS: true
-            SKIP_PROXY_TESTS: true
-          os: ubuntu-latest
-        - # Bionic, arm64, GCC, OpenSSL
-          container:
-            name: bionic-arm64
-            dockerfile: bionic
-            qemu: true
-          env:
-            CC: gcc
-            CMAKE_GENERATOR: Ninja
-            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON
-            RUN_INVASIVE_TESTS: true
-            SKIP_PROXY_TESTS: true
-          os: ubuntu-latest
       fail-fast: false
     env: ${{ matrix.platform.env }}
     runs-on: ${{ matrix.platform.os }}
