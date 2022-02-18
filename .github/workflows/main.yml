@@ -57,3 +57,8 @@ jobs:
         mkdir build && cd build
         ../source/ci/build.sh
       shell: bash
+    - name: Benchmark
+      run: |
+        mkdir benchmark && cd benchmark
+        ../source/ci/benchmark.sh
+      shell: bash
