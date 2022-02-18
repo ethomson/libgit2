@@ -56,8 +56,22 @@ cat results/* | jq -s . > results.json
 
 (echo "| Command | git time (ms) | libgit2 time (ms) |" &&
  echo "|---------|---------------|-------------------|" &&
- jq -r '.[] | [ .name, .results[0].mean, .results[0].stddev, .results[1].mean, .results[1].stddev ] | @tsv' < results.json |
-	while IFS=$'\t' read -r name git_time git_stddev libgit2_time libgit2_stddev; do
+ jq -r '.[] | [ .name, .results[0].command, .results[0].mean, .results[0].stddev, .results[1].command, .results[1].mean, .results[1].stddev ] | @tsv' < results.json |
+	while IFS=$'\t' read -r name git_command git_time git_stddev libgit2_command libgit2_time libgit2_stddev; do
+		if [[ "${git_command}" !~ "^git " ]]; then
+			printf "| %s | %s | |\n" "$name" \
+				"🛑 Failed"
+			continue
+		fi
+
+		if [ "${libgit2_command}" = "" ]; then
+			printf "| %s | %.2f ± %.2f | %s |\n" "$name" \
+				$(echo "${git_time} * 1000" | bc) \
+				$(echo "${git_stddev} * 1000" | bc) \
+				"🛑 Failed"
+			continue
+		fi
+
 		libgit2_faster=$(echo "${git_time} > ${libgit2_time}" | bc -l)
 
 		if [ "${libgit2_faster}" = "1" ]; then
