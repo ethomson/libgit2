@@ -15,6 +15,4 @@ sudo apt-get install -y --no-install-recommends \
         make \
         ninja-build \
         pkgconf
-krb5-config --vendor
-krb5-config --libs-gssapi
 cargo install hyperfine
