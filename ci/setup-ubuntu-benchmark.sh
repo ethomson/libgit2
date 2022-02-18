@@ -2,5 +2,5 @@
 
 set -x
 
-sudo apt-get update
-sudo apt-get install hyperfine
+sudo apt-get install cargo
+cargo install hyperfine
