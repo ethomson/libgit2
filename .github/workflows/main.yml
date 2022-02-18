@@ -62,3 +62,8 @@ jobs:
         mkdir benchmark && cd benchmark
         ../source/ci/benchmark.sh
       shell: bash
+    - name: Upload results
+      uses: actions/upload-artifact@v2
+      with:
+        name: results
+        path: benchmark/results.*
