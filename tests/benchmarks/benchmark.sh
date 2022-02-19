@@ -78,6 +78,35 @@ if [ "${OUTPUT_DIR}" = "" ]; then
 fi
 
 #
+# collect some information about the test environment
+#
+
+SYSTEM_OS=$(uname -s)
+if [ "${SYSTEM_OS}" = "Darwin" ]; then SYSTEM_OS="macOS"; fi
+
+SYSTEM_KERNEL=$(uname -v)
+
+if [[ "${CLI}" == "/"* ]]; then
+	CLI_PATH="${CLI}"
+else
+	CLI_PATH=$(which "${CLI}")
+fi
+
+CLI_NAME=$(basename "${CLI}")
+CLI_VERSION=$("${CLI}" --version)
+
+if [ "${BASELINE_CLI}" != "" ]; then
+	if [[ "${BASELINE_CLI}" == "/"* ]]; then
+		BASELINE_CLI_PATH="${BASELINE_CLI}"
+	else
+		BASELINE_CLI_PATH=$(which "${BASELINE_CLI}")
+	fi
+
+	BASELINE_CLI_NAME=$(basename "${BASELINE_CLI}")
+	BASELINE_CLI_VERSION=$("${BASELINE_CLI}" --version)
+fi
+
+#
 # run the benchmarks
 #
 
@@ -96,6 +125,9 @@ ANY_FOUND=
 ANY_FAILED=
 
 indent() { sed "s/^/  /"; }
+time_in_ms() { if [ $(uname -s) = "Darwin" ]; then date "+%s000"; else date "+%s%N" ; fi; }
+
+TIME_START=$(time_in_ms)
 
 for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 	TEST_FILE=$(basename "${TEST_PATH}")
@@ -163,6 +195,8 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 	jq ". |= { \"name\": \"${TEST_NAME}\" } + ." < "${JSON_FILE}" > "${JSON_FILE}.new" && mv "${JSON_FILE}.new" "${JSON_FILE}"
 done
 
+TIME_END=$(time_in_ms)
+
 if [ "$ANY_FOUND" != "1" ]; then
 	echo ""
 	echo "error: no benchmark suite \"${SUITE}\"."
@@ -177,7 +211,19 @@ if [ "${JSON_RESULT}" != "" ]; then
 		echo "# Writing JSON results: ${JSON_RESULT}"
 	fi
 
-	jq -n '[inputs]' "${OUTPUT_DIR}"/*.json > "${JSON_RESULT}"
+	SYSTEM_JSON="{ \"os\": \"${SYSTEM_OS}\",  \"kernel\": \"${SYSTEM_KERNEL}\" }"
+	TIME_JSON="{ \"start\": ${TIME_START}, \"end\": ${TIME_END} }"
+	CLI_JSON="{ \"name\": \"${CLI_NAME}\", \"path\": \"${CLI_PATH}\", \"version\": \"${CLI_VERSION}\" }"
+	BASELINE_JSON="{ \"name\": \"${BASELINE_CLI_NAME}\", \"path\": \"${BASELINE_CLI_PATH}\", \"version\": \"${BASELINE_CLI_VERSION}\" }"
+
+	if [ "${BASELINE_CLI}" != "" ]; then
+		EXECUTOR_JSON="{ \"baseline\": ${BASELINE_JSON}, \"cli\": ${CLI_JSON} }"
+	else
+		EXECUTOR_JSON="{ \"cli\": ${CLI_JSON} }"
+	fi
+
+	# add our metadata to all the test results
+	jq -n "{ \"system\": ${SYSTEM_JSON}, \"time\": ${TIME_JSON}, \"executor\": ${EXECUTOR_JSON}, \"tests\": [inputs] }" "${OUTPUT_DIR}"/*.json > "${JSON_RESULT}"
 fi
 
 # combine all the data into a zip if requested
