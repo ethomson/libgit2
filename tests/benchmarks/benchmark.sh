@@ -1,0 +1,202 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+#
+# parse the command line
+#
+
+usage() { echo "usage: $(basename "$0") [--cli <path>] [--baseline-cli <path>] [--suite <suite>] [--json <path>] [--zip <path>] [--verbose]"; }
+
+CLI="git"
+BASELINE_CLI=
+SUITE=
+JSON_RESULT=
+ZIP_RESULT=
+OUTPUT_DIR=
+VERBOSE=
+NEXT=
+
+for a in "$@"; do
+	if [ "${NEXT}" = "cli" ]; then
+		CLI="${a}"
+		NEXT=
+	elif [ "${NEXT}" = "baseline-cli" ]; then
+		BASELINE_CLI="${a}"
+		NEXT=
+	elif [ "${NEXT}" = "suite" ]; then
+		SUITE="${a}"
+		NEXT=
+	elif [ "${NEXT}" = "json" ]; then
+		JSON_RESULT="${a}"
+		NEXT=
+	elif [ "${NEXT}" = "zip" ]; then
+		ZIP_RESULT="${a}"
+		NEXT=
+	elif [ "${NEXT}" = "output-dir" ]; then
+		OUTPUT_DIR="${a}"
+		NEXT=
+	elif [ "${a}" = "c" -o "${a}" = "--cli" ]; then
+		NEXT="cli"
+	elif [[ "${a}" == "-c"* ]]; then
+		CLI=$(echo "${a}" | sed -e "s/^-c//")
+	elif [ "${a}" = "b" -o "${a}" = "--baseline-cli" ]; then
+		NEXT="baseline-cli"
+	elif [[ "${a}" == "-b"* ]]; then
+		BASELINE_CLI=$(echo "${a}" | sed -e "s/^-b//")
+	elif [ "${a}" = "-s" -o "${a}" = "--suite" ]; then
+		NEXT="suite"
+	elif [[ "${a}" == "-s"* ]]; then
+		SUITE=$(echo "${a}" | sed -e "s/^-s//")
+	elif [ "${a}" = "-v" -o "${a}" == "--verbose" ]; then
+		VERBOSE=1
+	elif [ "${a}" = "-j" -o "${a}" == "--json" ]; then
+		NEXT="json"
+	elif [[ "${a}" == "-j"* ]]; then
+		JSON_RESULT=$(echo "${a}" | sed -e "s/^-j//")
+	elif [ "${a}" = "-z" -o "${a}" == "--zip" ]; then
+		NEXT="zip"
+	elif [[ "${a}" == "-z"* ]]; then
+		ZIP_RESULT=$(echo "${a}" | sed -e "s/^-z//")
+	elif [ "${a}" = "--output-dir" ]; then
+		NEXT="output-dir"
+	else
+		usage 1>&2
+		exit 1
+	fi
+done
+
+if [ "${NEXT}" != "" ]; then
+	usage 1>&2
+	exit 1
+fi
+
+if [ "${OUTPUT_DIR}" = "" ]; then
+	OUTPUT_DIR=${OUTPUT_DIR:="$(mktemp -d)"}
+	CLEANUP_DIR=1
+fi
+
+#
+# run the benchmarks
+#
+
+echo "##############################################################################"
+if [ "${SUITE}" != "" ]; then
+	SUITE_PREFIX=$(echo "${SUITE}" | sed -e "s/::/__/")
+	echo "# Running ${SUITE} benchmarks"
+else
+	echo "# Running all benchmarks"
+fi
+echo "##############################################################################"
+echo ""
+
+BENCHMARK_DIR=${BENCHMARK_DIR:=$(dirname "$0")}
+ANY_FOUND=
+ANY_FAILED=
+
+indent() { sed "s/^/  /"; }
+
+for TEST_PATH in "${BENCHMARK_DIR}"/*; do
+	TEST_FILE=$(basename "${TEST_PATH}")
+
+	if [ ! -f "${TEST_PATH}" -o ! -x "${TEST_PATH}" ]; then
+		continue
+	fi
+
+	if [[ "${TEST_FILE}" != *"__"* ]]; then
+		continue
+	fi
+
+	if [[ "${TEST_FILE}" != "${SUITE_PREFIX}"* ]]; then
+		continue
+	fi
+
+	ANY_FOUND=1
+	TEST_NAME=$(echo "${TEST_FILE}" | sed -e "s/__/::/")
+
+	echo -n "# Benchmark: ${TEST_NAME}"
+	if [ "${VERBOSE}" = "1" ]; then
+		echo ""
+	else
+		echo -n ":  "
+	fi
+
+	OUTPUT_FILE="${OUTPUT_DIR}/${TEST_FILE}.out"
+	JSON_FILE="${OUTPUT_DIR}/${TEST_FILE}.json"
+	ERROR_FILE="${OUTPUT_DIR}/${TEST_FILE}.err"
+
+	FAILED=
+	${TEST_PATH} --cli "${CLI}" --baseline-cli "${BASELINE_CLI}" --json "${JSON_FILE}" >${OUTPUT_FILE} 2>${ERROR_FILE} || FAILED=1
+
+	if [ "${FAILED}" = "1" ]; then
+		if [ "${VERBOSE}" != "1" ]; then
+			echo "failed!"
+		fi
+
+		indent < "${ERROR_FILE}"
+		ANY_FAILED=1
+		continue
+	fi
+
+	# in verbose mode, just print the hyperfine results; otherwise,
+	# pull the useful information out of its json and summarize it
+	if [ "${VERBOSE}" = "1" ]; then
+		indent < "${OUTPUT_FILE}"
+	else
+		jq -r '[ .results[0].mean, .results[0].stddev, .results[1].mean, .results[1].stddev ] | @tsv' < "${JSON_FILE}" | while IFS=$'\t' read -r one_mean one_stddev two_mean two_stddev; do
+			if [ "${two_mean}" != "" ]; then
+				printf "%.2f ms ± %.2f ms  vs  %.2f ms ± %.2f ms\n" \
+					$(echo "${one_mean} * 1000" | bc) \
+					$(echo "${one_stddev} * 1000" | bc) \
+					$(echo "${two_mean} * 1000" | bc) \
+					$(echo "${two_stddev} * 1000" | bc)
+			else
+				printf "%.2f ms ± %.2f ms\n" \
+					$(echo "${one_mean} * 1000" | bc) \
+					$(echo "${one_stddev} * 1000" | bc)
+			fi
+		done
+	fi
+
+	# add our metadata to the hyperfine json result
+	jq ". |= { \"name\": \"${TEST_NAME}\" } + ." < "${JSON_FILE}" > "${JSON_FILE}.new" && mv "${JSON_FILE}.new" "${JSON_FILE}"
+done
+
+if [ "$ANY_FOUND" != "1" ]; then
+	echo ""
+	echo "error: no benchmark suite \"${SUITE}\"."
+	echo ""
+	exit 1
+fi
+
+# combine all the individual benchmark results into a single json file
+if [ "${JSON_RESULT}" != "" ]; then
+	if [ "${VERBOSE}" = "1" ]; then
+		echo ""
+		echo "# Writing JSON results: ${JSON_RESULT}"
+	fi
+
+	jq -n '[inputs]' "${OUTPUT_DIR}"/*.json > "${JSON_RESULT}"
+fi
+
+# combine all the data into a zip if requested
+if [ "${ZIP_RESULT}" != "" ]; then
+	if [ "${VERBOSE}" = "1" ]; then
+		if [ "${JSON_RESULT}" = "" ]; then echo ""; fi
+		echo "# Writing ZIP results: ${ZIP_RESULT}"
+	fi
+
+	zip -jr "${ZIP_RESULT}" "${OUTPUT_DIR}" >/dev/null
+fi
+
+if [ "$CLEANUP_DIR" = "1" ]; then
+	rm -f "${OUTPUT_DIR}"/*.out
+	rm -f "${OUTPUT_DIR}"/*.err
+	rm -f "${OUTPUT_DIR}"/*.json
+	rmdir "${OUTPUT_DIR}"
+fi
+
+if [ "$ANY_FAILED" = "1" ]; then
+	exit 1
+fi
