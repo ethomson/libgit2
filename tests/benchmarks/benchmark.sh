@@ -176,16 +176,23 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 		indent < "${OUTPUT_FILE}"
 	else
 		jq -r '[ .results[0].mean, .results[0].stddev, .results[1].mean, .results[1].stddev ] | @tsv' < "${JSON_FILE}" | while IFS=$'\t' read -r one_mean one_stddev two_mean two_stddev; do
+			one_mean=$(echo "${one_mean} * 1000" | bc)
+			one_stddev=$(echo "${one_stddev} * 1000" | bc)
+
+			if [ "${one_mean}" = "" ]; then exit 1; fi
+
 			if [ "${two_mean}" != "" ]; then
+				two_mean=$(echo "${two_mean} * 1000" | bc)
+				two_stddev=$(echo "${two_stddev} * 1000" | bc)
+
+				if [ "${two_mean}" = "" ]; then exit 1; fi
+
 				printf "%.2f ms ± %.2f ms  vs  %.2f ms ± %.2f ms\n" \
-					$(echo "${one_mean} * 1000" | bc) \
-					$(echo "${one_stddev} * 1000" | bc) \
-					$(echo "${two_mean} * 1000" | bc) \
-					$(echo "${two_stddev} * 1000" | bc)
+					"${one_mean}" "${one_stddev}" \
+					"${two_mean}" "${two_stddev}"
 			else
 				printf "%.2f ms ± %.2f ms\n" \
-					$(echo "${one_mean} * 1000" | bc) \
-					$(echo "${one_stddev} * 1000" | bc)
+					"${one_mean}" "${one_stddev}"
 			fi
 		done
 	fi
