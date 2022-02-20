@@ -179,13 +179,13 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 			one_mean=$(echo "${one_mean} * 1000" | bc)
 			one_stddev=$(echo "${one_stddev} * 1000" | bc)
 
-			if [ "${one_mean}" = "" ]; then exit 1; fi
+			if [ "$?" != "0" ]; then exit 1; fi
 
 			if [ "${two_mean}" != "" ]; then
 				two_mean=$(echo "${two_mean} * 1000" | bc)
 				two_stddev=$(echo "${two_stddev} * 1000" | bc)
 
-				if [ "${two_mean}" = "" ]; then exit 1; fi
+				if [ "$?" != "0" ]; then exit 1; fi
 
 				printf "%.2f ms ± %.2f ms  vs  %.2f ms ± %.2f ms\n" \
 					"${one_mean}" "${one_stddev}" \
