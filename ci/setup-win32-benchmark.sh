@@ -2,4 +2,4 @@
 
 set -ex
 
-choco install hyperfine
+choco install hyperfine zip
