@@ -60,7 +60,7 @@ jobs:
     - name: Benchmark
       run: |
         mkdir benchmark && cd benchmark
-        ../tests/benchmarks/benchmark.sh --json benchmarks.json --zip benchmarks.zip
+        ../source/tests/benchmarks/benchmark.sh --json benchmarks.json --zip benchmarks.zip
       shell: bash
     - name: Upload results
       uses: actions/upload-artifact@v2
