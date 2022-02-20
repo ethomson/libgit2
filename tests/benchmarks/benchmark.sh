@@ -199,14 +199,10 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 			if [ "$?" != "0" ]; then exit 1; fi
 
 			if [ "${two_mean}" != "" ]; then
-				two_mean=$(echo "${two_mean} * 1000" | bc)
-				two_stddev=$(echo "${two_stddev} * 1000" | bc)
+				two_mean=$(humanize_secs "${two_mean}")
+				two_stddev=$(humanize_secs "${two_stddev}")
 
-				if [ "$?" != "0" ]; then exit 1; fi
-
-				printf "%.2f ms ± %.2f ms  vs  %.2f ms ± %.2f ms\n" \
-					"${one_mean}" "${one_stddev}" \
-					"${two_mean}" "${two_stddev}"
+				echo "${one_mean} ± ${one_stddev}  vs  ${two_mean} ± ${two_stddev}"
 			else
 				echo "${one_mean} ± ${one_stddev}"
 			fi
