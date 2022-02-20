@@ -1,6 +1,8 @@
 # variables that benchmark tests can set
 #
 
+set -eo pipefail
+
 # this test should flush the disk cache before runs
 FLUSH_DISK_CACHE=0
 

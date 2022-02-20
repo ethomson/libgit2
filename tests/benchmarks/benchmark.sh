@@ -1,7 +1,6 @@
 #!/bin/bash
 
-set -e
-set -o pipefail
+set -eo pipefail
 
 #
 # parse the command line
