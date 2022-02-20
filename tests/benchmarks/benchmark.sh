@@ -125,6 +125,23 @@ ANY_FAILED=
 
 indent() { sed "s/^/  /"; }
 time_in_ms() { if [ $(uname -s) = "Darwin" ]; then date "+%s000"; else date "+%s%N" ; fi; }
+humanize_secs() {
+	if [ "$0" = "" ]; then
+		return ""
+	fi
+
+	perl -w <<EOF
+use strict;
+my @units = ( 's', 'ms', 'us', 'ns' );
+my \$num = "${1}";
+my \$cnt = 0;
+while (\$num < 1 && \$cnt < \$#units) {
+        \$num *= 1000;
+        \$cnt++;
+}
+printf("%.2f %s\n", \$num, \$units[\$cnt]);
+EOF
+}
 
 TIME_START=$(time_in_ms)
 
@@ -176,8 +193,8 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 		indent < "${OUTPUT_FILE}"
 	else
 		jq -r '[ .results[0].mean, .results[0].stddev, .results[1].mean, .results[1].stddev ] | @tsv' < "${JSON_FILE}" | while IFS=$'\t' read -r one_mean one_stddev two_mean two_stddev; do
-			one_mean=$(echo "${one_mean} * 1000" | bc)
-			one_stddev=$(echo "${one_stddev} * 1000" | bc)
+			one_mean=$(humanize_secs "${one_mean}")
+			one_stddev=$(humanize_secs "${one_stddev}")
 
 			if [ "$?" != "0" ]; then exit 1; fi
 
@@ -191,8 +208,7 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 					"${one_mean}" "${one_stddev}" \
 					"${two_mean}" "${two_stddev}"
 			else
-				printf "%.2f ms ± %.2f ms\n" \
-					"${one_mean}" "${one_stddev}"
+				echo "${one_mean} ± ${one_stddev}"
 			fi
 		done
 	fi
