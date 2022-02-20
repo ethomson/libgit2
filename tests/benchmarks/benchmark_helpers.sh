@@ -94,7 +94,7 @@ flush_cache() {
 	elif [ "$(uname -s)" = "Linux" ]; then
 		echo "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null"
 	elif [[ "$(uname -s)" == MINGW* ]]; then
-		echo "runas /user:Administrator PurgeStandbyList"
+		echo "PurgeStandbyList"
 	fi
 }
 
