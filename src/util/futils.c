@@ -239,24 +239,31 @@ int git_futils_readbuffer_updated(
 	if (updated != NULL)
 		*updated = 0;
 
-	if (p_stat(path, &st) < 0)
+	if (p_stat(path, &st) < 0) {
+		fprintf(stderr, "failed to stat");
 		return git_fs_path_set_error(errno, path, "stat");
+	}
 
 
 	if (S_ISDIR(st.st_mode)) {
 		git_error_set(GIT_ERROR_INVALID, "requested file is a directory");
+		fprintf(stderr, "is a directory");
 		return GIT_ENOTFOUND;
 	}
 
 	if (!git__is_sizet(st.st_size+1)) {
 		git_error_set(GIT_ERROR_OS, "invalid regular file stat for '%s'", path);
+		fprintf(stderr, "file size");
 		return -1;
 	}
 
-	if ((fd = git_futils_open_ro(path)) < 0)
+	if ((fd = git_futils_open_ro(path)) < 0) {
+		fprintf(stderr, "open ro: %d\n", fd);
 		return fd;
+	}
 
 	if (git_futils_readbuffer_fd(&buf, fd, (size_t)st.st_size) < 0) {
+		fprintf(stderr, "could not read\n");
 		p_close(fd);
 		return -1;
 	}
