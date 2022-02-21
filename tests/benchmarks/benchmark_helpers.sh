@@ -6,8 +6,13 @@ set -eo pipefail
 # this test should flush the disk cache before runs
 FLUSH_DISK_CACHE=0
 
+# this test uses the given repository; the repository in `tests/resources`
+# will be copied into place and the command will start in that directory
+REPOSITORY=
+
 # this test should run the given command in preparation of the tests
-# (note that this overrides `FLUSH_DISK_CACHE`)
+# this preparation script will be run _after_ repository creation and
+# _before_ flushing the disk cache
 PREPARE=
 
 # this test should run warmups
@@ -26,9 +31,9 @@ JSON=
 SHOW_OUTPUT=
 
 if [ "$CI" != "" ]; then
-	OUTPUT_STYLE="--style color"
+	OUTPUT_STYLE="color"
 else
-	OUTPUT_STYLE="--style auto"
+	OUTPUT_STYLE="auto"
 fi
 
 for a in "$@"; do
@@ -44,22 +49,22 @@ for a in "$@"; do
 	elif [ "${NEXT}" = "json" ]; then
 		JSON="${a}"
 		NEXT=
-	elif [ "${a}" = "-c" -o "${a}" = "--cli" ]; then
+	elif [ "${a}" = "-c" ] || [ "${a}" = "--cli" ]; then
 		NEXT="cli"
 	elif [[ "${a}" == "-c"* ]]; then
-		TEST_CLI=$(echo "${a}" | sed -e "s/^-c//")
-	elif [ "${a}" = "-b" -o "${a}" = "--baseline-cli" ]; then
+		TEST_CLI="${a/-c/}"
+	elif [ "${a}" = "-b" ] || [ "${a}" = "--baseline-cli" ]; then
 		NEXT="baseline-cli"
 	elif [[ "${a}" == "-b"* ]]; then
-		BASELINE_CLI=$(echo "${a}" | sed -e "s/^-b//")
+		BASELINE_CLI="${a/-b/}"
 	elif [ "${a}" == "--output-style" ]; then
 		NEXT="output-style"
-	elif [ "${a}" = "-j" -o "${a}" = "--json" ]; then
+	elif [ "${a}" = "-j" ] || [ "${a}" = "--json" ]; then
 		NEXT="json"
 	elif [[ "${a}" == "-j"* ]]; then
 		JSON="${a}"
 	elif [ "${a}" = "--show-output" ]; then
-		SHOW_OUTPUT="--show-output"
+		SHOW_OUTPUT=1
 		OUTPUT_STYLE=
 	fi
 done
@@ -68,8 +73,6 @@ if [ "${NEXT}" != "" ]; then
         usage 1>&2
         exit 1
 fi
-
-NAME=$(basename $0)
 
 create_rand() {
 	KILOBYTES=${1:=1}
@@ -100,23 +103,75 @@ flush_cache() {
 	fi
 }
 
+fullpath() {
+	if [[ "${1}" != *"/"* ]]; then
+		if ! which "${1}"; then
+			echo "${1}: command not found" 1>&2
+			exit 1
+		fi
+	else
+		echo "$(cd "$(dirname "${1}")" && pwd)/$(basename "${1}")"
+	fi
+}
+
+resources_dir() {
+	cd "$(dirname "$0")/../resources" && pwd
+}
+
 gitbench() {
 	if [ "$1" = "" ]; then
 		echo "usage: gitbench command..." 1>&2
 		exit 1
 	fi
 
-	if [ "$FLUSH_DISK_CACHE" = "1" ]; then
-		PREPARE=${PREPARE:=$(flush_cache)}
+	PREPARE=${PREPARE:="true"}
+
+	SANDBOX="$(mktemp -d)"
+	START_DIR="${SANDBOX}"
+
+	if [ "$REPOSITORY" != "" ]; then
+		if [ ! -d "$(resources_dir)/${REPOSITORY}" ]; then
+			echo "$0: no repository resource '${REPOSITORY}' found" 1>&2
+			exit 1
+		fi
+
+		START_DIR="${SANDBOX}/${REPOSITORY}"
+		PREPARE="rm -rf \"${SANDBOX}/${REPOSITORY}\" &&
+			 cp -R \"$(resources_dir)/${REPOSITORY}\" \"${SANDBOX}/\" &&
+			 mv \"${SANDBOX}/${REPOSITORY}/.gitted\" \"${SANDBOX}/${REPOSITORY}/.git\" &&
+			 (cd \"${START_DIR}\" && ${PREPARE})"
 	fi
 
-	if [ "$JSON" != "" ]; then
-		JSON_ARG="--export-json ${JSON}"
+	if [ "$FLUSH_DISK_CACHE" = "1" ]; then
+		PREPARE="${PREPARE} && $(flush_cache)"
 	fi
 
 	if [ "${BASELINE_CLI}" != "" ]; then
-		hyperfine --prepare "${PREPARE}" --warmup "${WARMUP}" ${OUTPUT_STYLE} ${SHOW_OUTPUT} ${JSON_ARG} "${BASELINE_CLI} ${1}" "${TEST_CLI} ${1}"
-	else
-		hyperfine --prepare "${PREPARE}" --warmup "${WARMUP}" ${OUTPUT_STYLE} ${SHOW_OUTPUT} ${JSON_ARG} "${TEST_CLI} ${1}"
+		BASELINE_CLI_PATH=$(fullpath "${BASELINE_CLI}")
 	fi
+	TEST_CLI_PATH=$(fullpath "${TEST_CLI}")
+
+	ARGUMENTS=("--prepare" "${PREPARE}" "--warmup" "${WARMUP}")
+
+	if [ "${OUTPUT_STYLE}" != "" ]; then
+		ARGUMENTS+=("--style" "${OUTPUT_STYLE}")
+	fi
+
+	if [ "${SHOW_OUTPUT}" != "" ]; then
+		ARGUMENTS+=("--show-output")
+	fi
+
+	if [ "$JSON" != "" ]; then
+		ARGUMENTS+=("--export-json" "${JSON}")
+	fi
+
+	if [ "${BASELINE_CLI}" != "" ]; then
+		ARGUMENTS+=("-n" "${BASELINE_CLI} ${1}" "cd ${START_DIR} && ${BASELINE_CLI_PATH} ${1}")
+	fi
+
+	ARGUMENTS+=("-n" "${TEST_CLI} ${1}" "cd ${START_DIR} && ${TEST_CLI_PATH} ${1}")
+
+	hyperfine "${ARGUMENTS[@]}"
+
+	rm -rf "${SANDBOX}"
 }

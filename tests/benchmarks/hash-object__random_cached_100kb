@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-. $(dirname $0)/benchmark_helpers.sh
+. "$(dirname "$0")/benchmark_helpers.sh"
 
 RAND=$(create_rand 100)
 

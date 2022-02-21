@@ -8,7 +8,7 @@ set -eo pipefail
 
 usage() { echo "usage: $(basename "$0") [--cli <path>] [--baseline-cli <path>] [--suite <suite>] [--json <path>] [--zip <path>] [--verbose] [--debug]"; }
 
-CLI="git"
+TEST_CLI="git"
 BASELINE_CLI=
 SUITE=
 JSON_RESULT=
@@ -20,7 +20,7 @@ NEXT=
 
 for a in "$@"; do
 	if [ "${NEXT}" = "cli" ]; then
-		CLI="${a}"
+		TEST_CLI="${a}"
 		NEXT=
 	elif [ "${NEXT}" = "baseline-cli" ]; then
 		BASELINE_CLI="${a}"
@@ -37,31 +37,31 @@ for a in "$@"; do
 	elif [ "${NEXT}" = "output-dir" ]; then
 		OUTPUT_DIR="${a}"
 		NEXT=
-	elif [ "${a}" = "c" -o "${a}" = "--cli" ]; then
+	elif [ "${a}" = "c" ] || [ "${a}" = "--cli" ]; then
 		NEXT="cli"
 	elif [[ "${a}" == "-c"* ]]; then
-		CLI=$(echo "${a}" | sed -e "s/^-c//")
-	elif [ "${a}" = "b" -o "${a}" = "--baseline-cli" ]; then
+		TEST_CLI="${a/-c/}"
+	elif [ "${a}" = "b" ] || [ "${a}" = "--baseline-cli" ]; then
 		NEXT="baseline-cli"
 	elif [[ "${a}" == "-b"* ]]; then
-		BASELINE_CLI=$(echo "${a}" | sed -e "s/^-b//")
-	elif [ "${a}" = "-s" -o "${a}" = "--suite" ]; then
+		BASELINE_CLI="${a/-b/}"
+	elif [ "${a}" = "-s" ] || [ "${a}" = "--suite" ]; then
 		NEXT="suite"
 	elif [[ "${a}" == "-s"* ]]; then
-		SUITE=$(echo "${a}" | sed -e "s/^-s//")
-	elif [ "${a}" = "-v" -o "${a}" == "--verbose" ]; then
+		SUITE="${a/-s/}"
+	elif [ "${a}" = "-v" ] || [ "${a}" == "--verbose" ]; then
 		VERBOSE=1
 	elif [ "${a}" == "--debug" ]; then
 		VERBOSE=1
 		DEBUG=1
-	elif [ "${a}" = "-j" -o "${a}" == "--json" ]; then
+	elif [ "${a}" = "-j" ] || [ "${a}" == "--json" ]; then
 		NEXT="json"
 	elif [[ "${a}" == "-j"* ]]; then
-		JSON_RESULT=$(echo "${a}" | sed -e "s/^-j//")
-	elif [ "${a}" = "-z" -o "${a}" == "--zip" ]; then
+		JSON_RESULT="${a/-j/}"
+	elif [ "${a}" = "-z" ] || [ "${a}" == "--zip" ]; then
 		NEXT="zip"
 	elif [[ "${a}" == "-z"* ]]; then
-		ZIP_RESULT=$(echo "${a}" | sed -e "s/^-z//")
+		ZIP_RESULT="${a/-z/}"
 	elif [ "${a}" = "--output-dir" ]; then
 		NEXT="output-dir"
 	else
@@ -90,12 +90,12 @@ if [ "${SYSTEM_OS}" = "Darwin" ]; then SYSTEM_OS="macOS"; fi
 SYSTEM_KERNEL=$(uname -v)
 
 fullpath() {
-	if [[ "$(uname -s)" == "MINGW"* && $(cygpath -u "${CLI}") == "/"* ]]; then
-		echo "${CLI}"
-	elif [[ "${CLI}" == "/"* ]]; then
-		echo "${CLI}"
+	if [[ "$(uname -s)" == "MINGW"* && $(cygpath -u "${TEST_CLI}") == "/"* ]]; then
+		echo "${TEST_CLI}"
+	elif [[ "${TEST_CLI}" == "/"* ]]; then
+		echo "${TEST_CLI}"
 	else
-		which "${CLI}"
+		which "${TEST_CLI}"
 	fi
 }
 
@@ -107,9 +107,9 @@ cli_version() {
 	fi
 }
 
-CLI_NAME=$(basename "${CLI}")
-CLI_PATH=$(fullpath "${CLI}")
-CLI_VERSION=$(cli_version "${CLI}")
+TEST_CLI_NAME=$(basename "${TEST_CLI}")
+TEST_CLI_PATH=$(fullpath "${TEST_CLI}")
+TEST_CLI_VERSION=$(cli_version "${TEST_CLI}")
 
 if [ "${BASELINE_CLI}" != "" ]; then
 	if [[ "${BASELINE_CLI}" == "/"* ]]; then
@@ -129,7 +129,7 @@ fi
 
 echo "##############################################################################"
 if [ "${SUITE}" != "" ]; then
-	SUITE_PREFIX=$(echo "${SUITE}" | sed -e "s/::/__/")
+	SUITE_PREFIX="${SUITE/::/__}"
 	echo "## Running ${SUITE} benchmarks"
 else
 	echo "## Running all benchmarks"
@@ -140,7 +140,7 @@ echo ""
 if [ "${BASELINE_CLI}" != "" ]; then
 	echo "# Baseline CLI: ${BASELINE_CLI} (${BASELINE_CLI_VERSION})"
 fi
-echo "# Test CLI: ${CLI} (${CLI_VERSION})"
+echo "# Test CLI: ${TEST_CLI} (${TEST_CLI_VERSION})"
 echo ""
 
 BENCHMARK_DIR=${BENCHMARK_DIR:=$(dirname "$0")}
@@ -148,10 +148,11 @@ ANY_FOUND=
 ANY_FAILED=
 
 indent() { sed "s/^/  /"; }
-time_in_ms() { if [ $(uname -s) = "Darwin" ]; then date "+%s000"; else date "+%s%N" ; fi; }
+time_in_ms() { if [ "$(uname -s)" = "Darwin" ]; then date "+%s000"; else date "+%s%N" ; fi; }
 humanize_secs() {
 	if [ "$0" = "" ]; then
-		return ""
+		echo ""
+		return
 	fi
 
 	# bash doesn't do floating point arithmetic, and we can't rely on
@@ -174,7 +175,7 @@ TIME_START=$(time_in_ms)
 for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 	TEST_FILE=$(basename "${TEST_PATH}")
 
-	if [ ! -f "${TEST_PATH}" -o ! -x "${TEST_PATH}" ]; then
+	if [ ! -f "${TEST_PATH}" ] || [ ! -x "${TEST_PATH}" ]; then
 		continue
 	fi
 
@@ -187,7 +188,7 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 	fi
 
 	ANY_FOUND=1
-	TEST_NAME=$(echo "${TEST_FILE}" | sed -e "s/__/::/")
+	TEST_NAME="${TEST_FILE/__/::}"
 
 	echo -n "${TEST_NAME}:"
 	if [ "${VERBOSE}" = "1" ]; then
@@ -205,7 +206,7 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 	ERROR_FILE="${OUTPUT_DIR}/${TEST_FILE}.err"
 
 	FAILED=
-	${TEST_PATH} --cli "${CLI}" --baseline-cli "${BASELINE_CLI}" --json "${JSON_FILE}" ${SHOW_OUTPUT} >${OUTPUT_FILE} 2>${ERROR_FILE} || FAILED=1
+	${TEST_PATH} --cli "${TEST_CLI}" --baseline-cli "${BASELINE_CLI}" --json "${JSON_FILE}" ${SHOW_OUTPUT} >"${OUTPUT_FILE}" 2>"${ERROR_FILE}" || FAILED=1
 
 	if [ "${FAILED}" = "1" ]; then
 		if [ "${VERBOSE}" != "1" ]; then
@@ -253,7 +254,7 @@ if [ "$ANY_FOUND" != "1" ]; then
 fi
 
 escape() {
-	echo "$1" | sed -e "s/\\\\/\\\\\\\\/g"
+	echo "${1//\\/\\\\}"
 }
 
 # combine all the individual benchmark results into a single json file
@@ -265,13 +266,13 @@ if [ "${JSON_RESULT}" != "" ]; then
 
 	SYSTEM_JSON="{ \"os\": \"${SYSTEM_OS}\",  \"kernel\": \"${SYSTEM_KERNEL}\" }"
 	TIME_JSON="{ \"start\": ${TIME_START}, \"end\": ${TIME_END} }"
-	CLI_JSON="{ \"name\": \"${CLI_NAME}\", \"path\": \"$(escape ${CLI_PATH})\", \"version\": \"${CLI_VERSION}\" }"
-	BASELINE_JSON="{ \"name\": \"${BASELINE_CLI_NAME}\", \"path\": \"$(escape ${BASELINE_CLI_PATH})\", \"version\": \"${BASELINE_CLI_VERSION}\" }"
+	TEST_CLI_JSON="{ \"name\": \"${TEST_CLI_NAME}\", \"path\": \"$(escape "${TEST_CLI_PATH}")\", \"version\": \"${TEST_CLI_VERSION}\" }"
+	BASELINE_CLI_JSON="{ \"name\": \"${BASELINE_CLI_NAME}\", \"path\": \"$(escape "${BASELINE_CLI_PATH}")\", \"version\": \"${BASELINE_CLI_VERSION}\" }"
 
 	if [ "${BASELINE_CLI}" != "" ]; then
-		EXECUTOR_JSON="{ \"baseline\": ${BASELINE_JSON}, \"cli\": ${CLI_JSON} }"
+		EXECUTOR_JSON="{ \"baseline\": ${BASELINE_CLI_JSON}, \"cli\": ${TEST_CLI_JSON} }"
 	else
-		EXECUTOR_JSON="{ \"cli\": ${CLI_JSON} }"
+		EXECUTOR_JSON="{ \"cli\": ${TEST_CLI_JSON} }"
 	fi
 
 	# add our metadata to all the test results

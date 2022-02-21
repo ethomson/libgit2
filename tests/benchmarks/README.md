@@ -13,11 +13,28 @@ single individual benchmark.  You can target either an individual
 version of a CLI, or you can A/B test a baseline CLI against a test
 CLI.
 
+### Specifying the command-line interface to test
+
+By default, the `git` in your path is benchmarked.  Use the
+`-c` (or `--cli`) option to specify the command-line interface
+to test.
+
+Example: `libgit2_bench --cli git2_cli` will run the tests against
+`git2_cli`.
+
+### Running tests to compare two different implementations
+
+You can compare a baseline command-line interface against a test
+command-line interface using the `-b (or `--baseline-cli`) option.
+
+Example: `libgit2_bench --baseline-cli git --cli git2_cli` will
+run the tests against both `git` and `git2_cli`.
+
 ### Running individual benchmark tests
 
 Similar to how a test suite or individual test is specified in
 [clar](https://github.com/clar-test/clar), the `-s` (or `--suite`)
-flag may be used to specify the suite or individual test to run.
+option may be used to specify the suite or individual test to run.
 Like clar, the suite and test name are separated by `::`, and like
 clar, this is a prefix match.
 
@@ -51,7 +68,7 @@ command in the baseline CLI to the test CLI.
 #!/bin/bash -e
 
 # include the benchmark library
-. $(dirname $0)/benchmark_helpers.sh
+. "$(dirname "$0")/benchmark_helpers.sh"
 
 # run the "help" command; this will benchmark `git2_cli help`
 gitbench help
@@ -64,3 +81,22 @@ filename should be the name of the benchmark suite, followed by two
 underscores, followed by the name of the benchmark.  For example,
 `hash-object__random_1kb` is the `random_1kb` test in the `hash-object`
 suite.
+
+### Options
+
+You can set variables to pass options to the `gitbench` function.
+
+* `REPOSITORY`  
+  Set the `REPOSITORY` to the name of a test resource repository (in
+  the `tests/resources` directory.  This repository will be copied into
+  a sandbox location before test execution, and your test will run in
+  this directory.  This is copied before the `PREPARE` script is run.
+* `PREPARE`  
+  A script to run before each invocation of the test is run.  This can
+  set up data for the test that will _not_ be timed.
+* `FLUSH_DISK_CACHE`  
+  Set `FLUSH_DISK_CACHE=1` to flush the disk cache before each test.
+  The disk cache will be flushed after the `PREPARE` script is run.
+* `WARMUP`
+  Set `WARMUP` to an integer to run the test multiple times before
+  actually measuring the timing; useful for "warming up" a cache.
