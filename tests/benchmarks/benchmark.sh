@@ -130,22 +130,18 @@ fi
 echo "##############################################################################"
 if [ "${SUITE}" != "" ]; then
 	SUITE_PREFIX=$(echo "${SUITE}" | sed -e "s/::/__/")
-	echo "# Running ${SUITE} benchmarks"
+	echo "## Running ${SUITE} benchmarks"
 else
-	echo "# Running all benchmarks"
+	echo "## Running all benchmarks"
 fi
 echo "##############################################################################"
 echo ""
 
-if [ "${VERBOSE}" != "" ]; then
-	echo "Test CLI: ${CLI} (${CLI_VERSION})"
-
-	if [ "${BASELINE_CLI}" != "" ]; then
-		echo "Baseline CLI: ${BASELINE_CLI} (${BASELINE_CLI_VERSION})"
-	fi
-
-	echo ""
+if [ "${BASELINE_CLI}" != "" ]; then
+	echo "# Baseline CLI: ${BASELINE_CLI} (${BASELINE_CLI_VERSION})"
 fi
+echo "# Test CLI: ${CLI} (${CLI_VERSION})"
+echo ""
 
 BENCHMARK_DIR=${BENCHMARK_DIR:=$(dirname "$0")}
 ANY_FOUND=
@@ -193,11 +189,11 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 	ANY_FOUND=1
 	TEST_NAME=$(echo "${TEST_FILE}" | sed -e "s/__/::/")
 
-	echo -n "# Benchmark: ${TEST_NAME}"
+	echo -n "${TEST_NAME}:"
 	if [ "${VERBOSE}" = "1" ]; then
 		echo ""
 	else
-		echo -n ":  "
+		echo -n "  "
 	fi
 
 	if [ "${DEBUG}" = "1" ]; then
