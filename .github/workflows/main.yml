@@ -21,7 +21,7 @@ jobs:
         - name: "Linux (GCC, OpenSSL)"
           env:
             CC: gcc
-            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON
+            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON -DCMAKE_BUILD_TYPE=Release
           id: linux
           os: ubuntu-latest
           setup-script: ubuntu
@@ -29,7 +29,7 @@ jobs:
           os: macos-10.15
           env:
             CC: clang
-            CMAKE_OPTIONS: -DREGEX_BACKEND=regcomp_l -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON
+            CMAKE_OPTIONS: -DREGEX_BACKEND=regcomp_l -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON -DCMAKE_BUILD_TYPE=Release
             PKG_CONFIG_PATH: /usr/local/opt/openssl/lib/pkgconfig
           id: macos
           setup-script: osx
@@ -38,7 +38,7 @@ jobs:
           env:
             ARCH: amd64
             CMAKE_GENERATOR: Visual Studio 16 2019
-            CMAKE_OPTIONS: -A x64 -DDEPRECATE_HARD=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON
+            CMAKE_OPTIONS: -A x64 -DDEPRECATE_HARD=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON -DCMAKE_BUILD_TYPE=Release
           id: windows
           setup-script: win32
       fail-fast: false
@@ -59,12 +59,18 @@ jobs:
       run: |
         mkdir build && cd build
         ../source/ci/build.sh
-        cmake -P ../source/cmake/ShowOutputs.cmake > ${GITHUB_ENV} 2>&1
+
+        eval $(cmake -P ../source/cmake/ShowVariables.cmake 2>&1)
+        if [[ "$(uname -s)" == MINGW* ]]; then
+          echo "CLI_OUTPUT_DIR=${CMAKE_BINARY_DIR}\\${CMAKE_BUILD_TYPE}" > "${GITHUB_ENV}"
+        else
+          echo "CLI_OUTPUT_DIR=${CMAKE_BINARY_DIR}\\${CMAKE_BUILD_TYPE}" > "${GITHUB_ENV}"
+        fi
       shell: bash
     - name: Benchmark
       run: |
         mkdir benchmark && cd benchmark
-        ../source/tests/benchmarks/benchmark.sh --cli "${{ env.CMAKE_BINARY_DIR }}/build/git2_cli" --json benchmarks.json --zip benchmarks.zip
+        ../source/tests/benchmarks/benchmark.sh --cli "${{ env.CLI_OUTPUT_DIR }}/git2_cli" --json benchmarks.json --zip benchmarks.zip
       shell: bash
     - name: Upload results
       uses: actions/upload-artifact@v2

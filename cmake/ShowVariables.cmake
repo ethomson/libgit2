@@ -1,0 +1,7 @@
+get_cmake_property(vars VARIABLES)
+list(SORT vars)
+foreach(var ${vars})
+	if(var MATCHES "CMAKE_.*")
+		message("${var}=${${var}}")
+	endif()
+endforeach()
