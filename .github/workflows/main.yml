@@ -62,15 +62,21 @@ jobs:
 
         eval $(cmake -P ../source/cmake/ShowVariables.cmake 2>&1)
         if [[ "$(uname -s)" == MINGW* ]]; then
-          echo "CLI_OUTPUT_DIR=${CMAKE_BINARY_DIR}\\${CMAKE_BUILD_TYPE}" > "${GITHUB_ENV}"
+          echo "CLI_OUTPUT_DIR=${CMAKE_BINARY_DIR}/Release" > "${GITHUB_ENV}"
         else
-          echo "CLI_OUTPUT_DIR=${CMAKE_BINARY_DIR}\\${CMAKE_BUILD_TYPE}" > "${GITHUB_ENV}"
+          echo "CLI_OUTPUT_DIR=${CMAKE_BINARY_DIR}" > "${GITHUB_ENV}"
         fi
       shell: bash
     - name: Benchmark
       run: |
+        if [[ "$(uname -s)" == MINGW* ]]; then
+          GIT2_CLI="$(cygpath -w $(pwd))\\build\\Release\\git2_cli"
+        else
+          GIT2_CLI="$(pwd)/build/git2_cli"
+        fi
+
         mkdir benchmark && cd benchmark
-        ../source/tests/benchmarks/benchmark.sh --cli "${{ env.CLI_OUTPUT_DIR }}/git2_cli" --json benchmarks.json --zip benchmarks.zip
+        ../source/tests/benchmarks/benchmark.sh --cli "${GIT2_CLI}" --json benchmarks.json --zip benchmarks.zip
       shell: bash
     - name: Upload results
       uses: actions/upload-artifact@v2
