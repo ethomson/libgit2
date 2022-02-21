@@ -85,13 +85,18 @@ if [ "${SYSTEM_OS}" = "Darwin" ]; then SYSTEM_OS="macOS"; fi
 
 SYSTEM_KERNEL=$(uname -v)
 
-if [[ "${CLI}" == "/"* ]]; then
-	CLI_PATH="${CLI}"
-else
-	CLI_PATH=$(which "${CLI}")
-fi
+fullpath() {
+	if [[ "$(uname -s)" == "MINGW"* && $(cygpath -u "${CLI}") == "/"* ]]; then
+		echo "${CLI}"
+	elif [[ "${CLI}" == "/"* ]]; then
+		echo "${CLI}"
+	else
+		which "${CLI}"
+	fi
+}
 
 CLI_NAME=$(basename "${CLI}")
+CLI_PATH=$(fullpath "${CLI}")
 CLI_VERSION=$("${CLI}" --version)
 
 if [ "${BASELINE_CLI}" != "" ]; then
@@ -102,6 +107,7 @@ if [ "${BASELINE_CLI}" != "" ]; then
 	fi
 
 	BASELINE_CLI_NAME=$(basename "${BASELINE_CLI}")
+	BASELINE_CLI_PATH=$(fullpath "${BASELINE_CLI}")
 	BASELINE_CLI_VERSION=$("${BASELINE_CLI}" --version)
 fi
 
@@ -130,6 +136,8 @@ humanize_secs() {
 		return ""
 	fi
 
+	# bash doesn't do floating point arithmetic, and we can't rely on
+	# bc being installed (it's not part of Git for Windows).  ick.
 	perl -w <<EOF
 use strict;
 my @units = ( 's', 'ms', 'us', 'ns' );
