@@ -138,10 +138,10 @@ echo "##########################################################################
 echo ""
 
 if [ "${VERBOSE}" != "" ]; then
-	echo "Test CLI: ${CLI}"
+	echo "Test CLI: ${CLI} (${CLI_VERSION})"
 
 	if [ "${BASELINE_CLI}" != "" ]; then
-		echo "Baseline CLI: ${BASELINE_CLI}"
+		echo "Baseline CLI: ${BASELINE_CLI} (${BASELINE_CLI_VERSION})"
 	fi
 
 	echo ""
