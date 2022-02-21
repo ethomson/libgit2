@@ -168,12 +168,16 @@ int git_futils_readbuffer_fd(git_str *buf, git_file fd, size_t len)
 	read_size = p_read(fd, buf->ptr, len);
 
 	if (read_size < 0) {
+		printf("!!!\n");
+		perror("read");
 		git_error_set(GIT_ERROR_OS, "failed to read descriptor");
 		git_str_dispose(buf);
 		return -1;
 	}
 
 	if ((size_t)read_size != len) {
+		printf("...\n");
+		perror("mismatch");
 		git_error_set(GIT_ERROR_FILESYSTEM, "could not read (expected %" PRIuZ " bytes, read %" PRIuZ ")", len, (size_t)read_size);
 		git_str_dispose(buf);
 		return -1;
