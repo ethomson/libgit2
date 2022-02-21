@@ -80,6 +80,10 @@ jobs:
         echo "----"
         ls -Flas build
         echo "----"
+        ls -Flas build/x64
+        echo "----"
+        ls -Flas build/Debug
+        echo "----"
 
         mkdir benchmark && cd benchmark
         ../source/tests/benchmarks/benchmark.sh --cli "${GIT2_CLI}" --json benchmarks.json --zip benchmarks.zip
