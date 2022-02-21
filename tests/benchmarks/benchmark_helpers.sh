@@ -98,12 +98,18 @@ flush_cache() {
 		echo "sync && sudo purge"
 	elif [ "$(uname -s)" = "Linux" ]; then
 		echo "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null"
-	elif [[ "$(uname -s)" == MINGW* ]]; then
+	elif [[ "$(uname -s)" == "MINGW"* ]]; then
 		echo "PurgeStandbyList"
 	fi
 }
 
 fullpath() {
+	path="${1}"
+
+	if [[ "$(uname -s)" == "MINGW"* ]]; then
+		path="$(cygpath -u "${1}")"
+	fi
+
 	if [[ "${1}" != *"/"* ]]; then
 		if ! which "${1}"; then
 			echo "${1}: command not found" 1>&2
@@ -112,6 +118,12 @@ fullpath() {
 	else
 		echo "$(cd "$(dirname "${1}")" && pwd)/$(basename "${1}")"
 	fi
+
+	if [[ "$(uname -s)" == "MINGW"* ]]; then
+		path="$(cygpath -w "${1}")"
+	fi
+
+	echo "${path}"
 }
 
 resources_dir() {
