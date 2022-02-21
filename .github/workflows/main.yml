@@ -71,6 +71,6 @@ jobs:
     - name: Upload results
       uses: actions/upload-artifact@v2
       with:
-        name: benchmarks
-        path: benchmark-${{ matrix.platform.id }}
+        name: benchmark-${{ matrix.platform.id }}
+        path: benchmark
       if: always()
