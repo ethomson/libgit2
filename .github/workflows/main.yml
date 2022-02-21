@@ -22,6 +22,7 @@ jobs:
           env:
             CC: clang
             CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON -DCMAKE_BUILD_TYPE=Release
+            CMAKE_BUILD_OPTIONS: --config Release
           id: linux
           os: ubuntu-latest
           setup-script: ubuntu
@@ -30,6 +31,7 @@ jobs:
           env:
             CC: clang
             CMAKE_OPTIONS: -DREGEX_BACKEND=regcomp_l -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON -DCMAKE_BUILD_TYPE=Release
+            CMAKE_BUILD_OPTIONS: --config Release
             PKG_CONFIG_PATH: /usr/local/opt/openssl/lib/pkgconfig
           id: macos
           setup-script: osx
@@ -39,6 +41,7 @@ jobs:
             ARCH: amd64
             CMAKE_GENERATOR: Visual Studio 16 2019
             CMAKE_OPTIONS: -A x64 -DDEPRECATE_HARD=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON -DCMAKE_BUILD_TYPE=Release
+            CMAKE_BUILD_OPTIONS: --config Release
           id: windows
           setup-script: win32
       fail-fast: false
@@ -63,13 +66,10 @@ jobs:
     - name: Benchmark
       run: |
         if [[ "$(uname -s)" == MINGW* ]]; then
-          GIT2_CLI="$(cygpath -w $(pwd))\\build\\Debug\\git2_cli"
+          GIT2_CLI="$(cygpath -w $(pwd))\\build\\Release\\git2_cli"
         else
           GIT2_CLI="$(pwd)/build/git2_cli"
         fi
-
-        echo "cli: ${GIT2_CLI}"
-        ls -Flas "${GIT2_CLI}"
 
         mkdir benchmark && cd benchmark
         ../source/tests/benchmarks/benchmark.sh --debug --cli "${GIT2_CLI}" --json benchmarks.json --zip benchmarks.zip

@@ -69,10 +69,10 @@ echo "##########################################################################
 
 # Determine parallelism; newer cmake supports `--build --parallel` but
 # we cannot yet rely on that.
-if [ "${CMAKE_GENERATOR}" = "Unix Makefiles" -a "${CORES}" != "" ]; then
+if [ "${CMAKE_GENERATOR}" = "Unix Makefiles" -a "${CORES}" != "" -a "${CMAKE_BUILD_OPTIONS}" = "" ]; then
 	BUILDER=(make -j ${CORES})
 else
-	BUILDER=("${CMAKE}" --build .)
+	BUILDER=("${CMAKE}" --build . ${CMAKE_BUILD_OPTIONS})
 fi
 
 env PATH="${BUILD_PATH}" "${BUILDER[@]}"
