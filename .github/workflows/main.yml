@@ -74,6 +74,13 @@ jobs:
           GIT2_CLI="$(pwd)/build/git2_cli"
         fi
 
+        echo "cli: ${GIT2_CLI}"
+        echo "----"
+        ls -Flas
+        echo "----"
+        ls -Flas build
+        echo "----"
+
         mkdir benchmark && cd benchmark
         ../source/tests/benchmarks/benchmark.sh --cli "${GIT2_CLI}" --json benchmarks.json --zip benchmarks.zip
       shell: bash
