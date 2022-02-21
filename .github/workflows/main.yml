@@ -59,14 +59,12 @@ jobs:
       run: |
         mkdir build && cd build
         ../source/ci/build.sh
+        cmake -P ../source/cmake/ShowOutputs.cmake > ${GITHUB_ENV} 2>&1
       shell: bash
     - name: Benchmark
       run: |
         mkdir benchmark && cd benchmark
-        pwd
-        ls -Flas ..
-        ls -Flas ../build
-        ../source/tests/benchmarks/benchmark.sh --cli ../build/git2_cli --json benchmarks.json --zip benchmarks.zip
+        ../source/tests/benchmarks/benchmark.sh --cli "${{ env.CMAKE_BINARY_DIR }}/build/git2_cli" --json benchmarks.json --zip benchmarks.zip
       shell: bash
     - name: Upload results
       uses: actions/upload-artifact@v2
