@@ -73,3 +73,4 @@ jobs:
       with:
         name: benchmarks
         path: benchmark-${{ matrix.platform.id }}
+      if: always()
