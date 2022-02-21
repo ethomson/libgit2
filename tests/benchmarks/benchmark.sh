@@ -257,7 +257,7 @@ if [ "$ANY_FOUND" != "1" ]; then
 fi
 
 escape() {
-	echo "$1" | sed -e "s/\\/\\\\/g"
+	echo "$1" | sed -e "s/\\\\/\\\\\\\\/g"
 }
 
 # combine all the individual benchmark results into a single json file
