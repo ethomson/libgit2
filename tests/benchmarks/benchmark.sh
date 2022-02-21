@@ -256,6 +256,10 @@ if [ "$ANY_FOUND" != "1" ]; then
 	exit 1
 fi
 
+escape() {
+	echo "$1" | sed -e "s/\\/\\\\/g"
+}
+
 # combine all the individual benchmark results into a single json file
 if [ "${JSON_RESULT}" != "" ]; then
 	if [ "${VERBOSE}" = "1" ]; then
@@ -265,8 +269,8 @@ if [ "${JSON_RESULT}" != "" ]; then
 
 	SYSTEM_JSON="{ \"os\": \"${SYSTEM_OS}\",  \"kernel\": \"${SYSTEM_KERNEL}\" }"
 	TIME_JSON="{ \"start\": ${TIME_START}, \"end\": ${TIME_END} }"
-	CLI_JSON="{ \"name\": \"${CLI_NAME}\", \"path\": \"${CLI_PATH}\", \"version\": \"${CLI_VERSION}\" }"
-	BASELINE_JSON="{ \"name\": \"${BASELINE_CLI_NAME}\", \"path\": \"${BASELINE_CLI_PATH}\", \"version\": \"${BASELINE_CLI_VERSION}\" }"
+	CLI_JSON="{ \"name\": \"${CLI_NAME}\", \"path\": \"$(escape ${CLI_PATH})\", \"version\": \"${CLI_VERSION}\" }"
+	BASELINE_JSON="{ \"name\": \"${BASELINE_CLI_NAME}\", \"path\": \"$(escape ${BASELINE_CLI_PATH})\", \"version\": \"${BASELINE_CLI_VERSION}\" }"
 
 	if [ "${BASELINE_CLI}" != "" ]; then
 		EXECUTOR_JSON="{ \"baseline\": ${BASELINE_JSON}, \"cli\": ${CLI_JSON} }"
