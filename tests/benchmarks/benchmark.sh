@@ -125,6 +125,16 @@ fi
 echo "##############################################################################"
 echo ""
 
+if [ "${VERBOSE}" != "" ]; then
+	echo "Test CLI: ${CLI}"
+
+	if [ "${BASELINE_CLI}" != "" ]; then
+		echo "Baseline CLI: ${BASELINE_CLI}"
+	fi
+
+	echo ""
+fi
+
 BENCHMARK_DIR=${BENCHMARK_DIR:=$(dirname "$0")}
 ANY_FOUND=
 ANY_FAILED=
