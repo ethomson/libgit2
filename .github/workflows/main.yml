@@ -60,7 +60,6 @@ jobs:
         mkdir build && cd build
         ../source/ci/build.sh
 
-        eval $(cmake -P ../source/cmake/ShowVariables.cmake 2>&1)
         if [[ "$(uname -s)" == MINGW* ]]; then
           echo "CLI_OUTPUT_DIR=${CMAKE_BINARY_DIR}/Release" > "${GITHUB_ENV}"
         else
