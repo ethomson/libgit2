@@ -18,9 +18,9 @@ jobs:
     strategy:
       matrix:
         platform:
-        - name: "Linux (GCC, OpenSSL)"
+        - name: "Linux (clang, OpenSSL)"
           env:
-            CC: gcc
+            CC: clang
             CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DUSE_GSSAPI=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_CLI=ON -DCMAKE_BUILD_TYPE=Release
           id: linux
           os: ubuntu-latest
