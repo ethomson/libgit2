@@ -63,7 +63,7 @@ jobs:
     - name: Benchmark
       run: |
         mkdir benchmark && cd benchmark
-        ../source/tests/benchmarks/benchmark.sh --cli ../build/git2_cli --baseline-cli git --json benchmarks.json --zip benchmarks.zip
+        ../source/tests/benchmarks/benchmark.sh --cli ../build/git2_cli --json benchmarks.json --zip benchmarks.zip
       shell: bash
     - name: Upload results
       uses: actions/upload-artifact@v2
