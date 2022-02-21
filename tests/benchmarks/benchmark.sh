@@ -6,7 +6,7 @@ set -eo pipefail
 # parse the command line
 #
 
-usage() { echo "usage: $(basename "$0") [--cli <path>] [--baseline-cli <path>] [--suite <suite>] [--json <path>] [--zip <path>] [--verbose]"; }
+usage() { echo "usage: $(basename "$0") [--cli <path>] [--baseline-cli <path>] [--suite <suite>] [--json <path>] [--zip <path>] [--verbose] [--debug]"; }
 
 CLI="git"
 BASELINE_CLI=
@@ -15,6 +15,7 @@ JSON_RESULT=
 ZIP_RESULT=
 OUTPUT_DIR=
 VERBOSE=
+DEBUG=
 NEXT=
 
 for a in "$@"; do
@@ -50,6 +51,9 @@ for a in "$@"; do
 		SUITE=$(echo "${a}" | sed -e "s/^-s//")
 	elif [ "${a}" = "-v" -o "${a}" == "--verbose" ]; then
 		VERBOSE=1
+	elif [ "${a}" == "--debug" ]; then
+		VERBOSE=1
+		DEBUG=1
 	elif [ "${a}" = "-j" -o "${a}" == "--json" ]; then
 		NEXT="json"
 	elif [[ "${a}" == "-j"* ]]; then
@@ -95,9 +99,17 @@ fullpath() {
 	fi
 }
 
+cli_version() {
+	if [[ "$(uname -s)" == "MINGW"* ]]; then
+		$(cygpath -u "$1") --version
+	else
+		"$1" --version
+	fi
+}
+
 CLI_NAME=$(basename "${CLI}")
 CLI_PATH=$(fullpath "${CLI}")
-CLI_VERSION=$("${CLI}" --version)
+CLI_VERSION=$(cli_version "${CLI}")
 
 if [ "${BASELINE_CLI}" != "" ]; then
 	if [[ "${BASELINE_CLI}" == "/"* ]]; then
@@ -108,7 +120,7 @@ if [ "${BASELINE_CLI}" != "" ]; then
 
 	BASELINE_CLI_NAME=$(basename "${BASELINE_CLI}")
 	BASELINE_CLI_PATH=$(fullpath "${BASELINE_CLI}")
-	BASELINE_CLI_VERSION=$("${BASELINE_CLI}" --version)
+	BASELINE_CLI_VERSION=$(cli_version "${BASELINE_CLI}")
 fi
 
 #
@@ -188,12 +200,16 @@ for TEST_PATH in "${BENCHMARK_DIR}"/*; do
 		echo -n ":  "
 	fi
 
+	if [ "${DEBUG}" = "1" ]; then
+		SHOW_OUTPUT="--show-output"
+	fi
+
 	OUTPUT_FILE="${OUTPUT_DIR}/${TEST_FILE}.out"
 	JSON_FILE="${OUTPUT_DIR}/${TEST_FILE}.json"
 	ERROR_FILE="${OUTPUT_DIR}/${TEST_FILE}.err"
 
 	FAILED=
-	${TEST_PATH} --cli "${CLI}" --baseline-cli "${BASELINE_CLI}" --json "${JSON_FILE}" >${OUTPUT_FILE} 2>${ERROR_FILE} || FAILED=1
+	${TEST_PATH} --cli "${CLI}" --baseline-cli "${BASELINE_CLI}" --json "${JSON_FILE}" ${SHOW_OUTPUT} >${OUTPUT_FILE} 2>${ERROR_FILE} || FAILED=1
 
 	if [ "${FAILED}" = "1" ]; then
 		if [ "${VERBOSE}" != "1" ]; then
