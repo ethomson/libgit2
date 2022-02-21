@@ -72,7 +72,7 @@ jobs:
         ls -Flas "${GIT2_CLI}"
 
         mkdir benchmark && cd benchmark
-        ../source/tests/benchmarks/benchmark.sh --verbose --cli "${GIT2_CLI}" --json benchmarks.json --zip benchmarks.zip
+        ../source/tests/benchmarks/benchmark.sh --debug --cli "${GIT2_CLI}" --json benchmarks.json --zip benchmarks.zip
       shell: bash
     - name: Upload results
       uses: actions/upload-artifact@v2
