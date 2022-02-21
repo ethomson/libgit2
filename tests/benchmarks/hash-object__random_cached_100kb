@@ -1,0 +1,7 @@
+#!/bin/bash -e
+
+. $(dirname $0)/benchmark_helpers.sh
+
+RAND=$(create_rand 100)
+
+WARMUP=5 gitbench "hash-object ${RAND}"

@@ -1,0 +1,7 @@
+#!/bin/bash -e
+
+. $(dirname $0)/benchmark_helpers.sh
+
+RAND=$(create_rand 100)
+
+FLUSH_DISK_CACHE=1 gitbench "hash-object ${RAND}"
