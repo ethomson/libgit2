@@ -2,6 +2,4 @@
 
 . "$(dirname "$0")/benchmark_helpers.sh"
 
-RAND=$(create_rand 10000)
-
-REPOSITORY="empty_standard_repo" FLUSH_DISK_CACHE=1 gitbench hash-object -w "${RAND}"
+gitbench --flush-disk-cache --repository "empty_standard_repo" --sandbox "random" hash-object "../random/10mb"

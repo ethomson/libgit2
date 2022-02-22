@@ -65,6 +65,7 @@ for a in "$@"; do
 	elif [ "${a}" = "--output-dir" ]; then
 		NEXT="output-dir"
 	else
+		echo "$(basename "$0"): unknown option: ${a}" 1>&2
 		usage 1>&2
 		exit 1
 	fi
