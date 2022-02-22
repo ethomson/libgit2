@@ -113,12 +113,7 @@ create_preparescript() {
 			size="1024"
 		fi
 
-		source="/dev/urandom"
-		if [[ "$(uname -s)" == "MINGW"* ]]; then
-			source="/dev/random"
-		fi
-
-		dd if="\${source}" of="\${1}" bs="\${size}" count=1 2>/dev/null
+		dd if="/dev/urandom" of="\${1}" bs="\${size}" count=1 2>/dev/null
 	}
 
 	flush_disk_cache() {
