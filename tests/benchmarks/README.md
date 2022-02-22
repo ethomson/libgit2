@@ -84,21 +84,34 @@ suite.
 
 ### Options
 
-You can set variables to pass options to the `gitbench` function.
+The `gitbench` function accepts several options.
 
-* `REPOSITORY`  
-  Set the `REPOSITORY` to the name of a test resource repository (in
-  the `tests/resources` directory.  This repository will be copied into
-  a sandbox location before test execution, and your test will run in
-  this directory.  This is copied before the `PREPARE` script is run.
-* `PREPARE`  
+* `--sandbox <path>`
+  The name of a test resource (in the `tests/resources` directory).
+  This will be copied as-is to the sandbox location before test
+  execution.  This is copied _before_ the `prepare` script is run.
+  This option may be specified multiple times.
+* `--repository <path>`  
+  The name of a test resource repository (in the `tests/resources`
+  directory).  This repository will be copied into a sandbox location
+  before test execution, and your test will run in this directory.
+  This is copied _before_ the `prepare` script is run.
+* `--prepare <script>`  
   A script to run before each invocation of the test is run.  This can
   set up data for the test that will _not_ be timed.  This script is run
   in bash on all platforms.
-* `FLUSH_DISK_CACHE`  
-  Set `FLUSH_DISK_CACHE=1` to flush the disk cache before each test.
-  The disk cache will be flushed after the `PREPARE` script is run.
-* `WARMUP`
-  Set `WARMUP` to an integer to run the test multiple times before
-  actually measuring the timing; useful for "warming up" a cache.
+
+  Several helper functions are available within the context of a prepare
+  script:
+
+  * `flush_disk_cache`  
+    Calling this will flush the disk cache before each test run.
+    This should probably be run at the end of the `prepare` script.
+  * `create_random_file <path> <size>`
+    Calling this will populate a file at the given `path` with `size`
+    bytes of random data.
+
+* `--warmup <n>`  
+  Specifies that the test should run `n` times before actually measuring
+  the timing; useful for "warming up" a cache.
 
