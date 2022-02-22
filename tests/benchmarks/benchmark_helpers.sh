@@ -105,24 +105,18 @@ flush_cache() {
 
 fullpath() {
 	path="${1}"
+	if [[ "$(uname -s)" == "MINGW"* ]]; then path="$(cygpath -u "${1}")"; fi
 
-	if [[ "$(uname -s)" == "MINGW"* ]]; then
-		path="$(cygpath -u "${1}")"
-	fi
-
-	if [[ "${1}" != *"/"* ]]; then
-		if ! which "${1}"; then
+	if [[ "${path}" != *"/"* ]]; then
+		if ! which "${path}"; then
 			echo "${1}: command not found" 1>&2
 			exit 1
 		fi
 	else
-		echo "$(cd "$(dirname "${1}")" && pwd)/$(basename "${1}")"
+		echo "$(cd "$(dirname "${path}")" && pwd)/$(basename "${path}")"
 	fi
 
-	if [[ "$(uname -s)" == "MINGW"* ]]; then
-		path="$(cygpath -w "${1}")"
-	fi
-
+	if [[ "$(uname -s)" == "MINGW"* ]]; then path="$(cygpath -w "${path}")"; fi
 	echo "${path}"
 }
 
