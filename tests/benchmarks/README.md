@@ -93,10 +93,12 @@ You can set variables to pass options to the `gitbench` function.
   this directory.  This is copied before the `PREPARE` script is run.
 * `PREPARE`  
   A script to run before each invocation of the test is run.  This can
-  set up data for the test that will _not_ be timed.
+  set up data for the test that will _not_ be timed.  This script is run
+  in bash on all platforms.
 * `FLUSH_DISK_CACHE`  
   Set `FLUSH_DISK_CACHE=1` to flush the disk cache before each test.
   The disk cache will be flushed after the `PREPARE` script is run.
 * `WARMUP`
   Set `WARMUP` to an integer to run the test multiple times before
   actually measuring the timing; useful for "warming up" a cache.
+

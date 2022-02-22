@@ -4,4 +4,4 @@
 
 RAND=$(create_rand 100)
 
-WARMUP=5 gitbench "hash-object ${RAND}"
+WARMUP=5 gitbench hash-object "${RAND}"

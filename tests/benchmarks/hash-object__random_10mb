@@ -4,4 +4,4 @@
 
 RAND=$(create_rand 10000)
 
-FLUSH_DISK_CACHE=1 gitbench "hash-object ${RAND}"
+FLUSH_DISK_CACHE=1 gitbench hash-object "${RAND}"
