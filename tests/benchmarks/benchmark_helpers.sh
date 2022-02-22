@@ -69,16 +69,6 @@ if [ "${NEXT}" != "" ]; then
         exit 1
 fi
 
-flush_cache() {
-	if [ "$(uname -s)" = "Darwin" ]; then
-		echo "sync && sudo purge"
-	elif [ "$(uname -s)" = "Linux" ]; then
-		echo "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null"
-	elif [[ "$(uname -s)" == "MINGW"* ]]; then
-		echo "PurgeStandbyList"
-	fi
-}
-
 fullpath() {
 	path="${1}"
 	if [[ "$(uname -s)" == "MINGW"* ]]; then path="$(cygpath -u "${1}")"; fi
@@ -107,8 +97,41 @@ temp_dir() {
 }
 
 create_preparescript() {
-	echo "set -e" >> "${SANDBOX_DIR}/prepare.sh"
-	echo "" >> "${SANDBOX_DIR}/prepare.sh"
+	# add some functions for users to use in preparation
+	cat >> "${SANDBOX_DIR}/prepare.sh" << EOF
+	set -e
+
+	create_random_file() {
+		if [ "\${1}" = "" ]; then
+			echo "usage: create_random_file <name> [size]" 1>&2
+			exit 1
+		fi
+
+		if [ "\${2}" != "" ]; then
+			size="\${2}"
+		else
+			size="1024"
+		fi
+
+		source="/dev/urandom"
+		if [[ "$(uname -s)" == "MINGW"* ]]; then
+			source="/dev/random"
+		fi
+
+		dd if="\${source}" of="\${1}" bs="\${size}" count=1 2>/dev/null
+	}
+
+	flush_disk_cache() {
+		if [ "$(uname -s)" = "Darwin" ]; then
+			sync && sudo purge
+		elif [ "$(uname -s)" = "Linux" ]; then
+			sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
+		elif [[ "$(uname -s)" == "MINGW"* ]]; then
+			PurgeStandbyList
+		fi
+	}
+
+EOF
 
 	# our run script starts by chdir'ing to the sandbox
 	echo "cd \"${SANDBOX_DIR}\"" >> "${SANDBOX_DIR}/prepare.sh"
@@ -120,23 +143,22 @@ create_preparescript() {
 	done
 
 	if [ "${REPOSITORY}" != "" ]; then
-		echo "" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "# sandbox repository: ${REPOSITORY}" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "rm -rf \"${SANDBOX_DIR}/${REPOSITORY}\"" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "cp -R \"$(resources_dir)/${REPOSITORY}\" \"${SANDBOX_DIR}/\"" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "if [ -d \"${SANDBOX_DIR}/${REPOSITORY}/.gitted\" ]; then mv \"${SANDBOX_DIR}/${REPOSITORY}/.gitted\" \"${SANDBOX_DIR}/${REPOSITORY}/.git\"; fi" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "cd \"${SANDBOX_DIR}/${REPOSITORY}\"" >> "${SANDBOX_DIR}/prepare.sh"
+		cat >> "${SANDBOX_DIR}/prepare.sh" << EOF
+
+		# sandbox repository: ${REPOSITORY}
+		rm -rf "${SANDBOX_DIR}/${REPOSITORY}"
+		cp -R "$(resources_dir)/${REPOSITORY}" "${SANDBOX_DIR}/"
+		if [ -d "${SANDBOX_DIR}/${REPOSITORY}/.gitted" ]; then
+			mv "${SANDBOX_DIR}/${REPOSITORY}/.gitted" "${SANDBOX_DIR}/${REPOSITORY}/.git";
+		fi
+
+		cd "${SANDBOX_DIR}/${REPOSITORY}"
+EOF
 	fi
 
 	if [ "${PREPARE}" != "" ]; then
 		echo "" >> "${SANDBOX_DIR}/prepare.sh"
 		echo "${PREPARE}" >> "${SANDBOX_DIR}/prepare.sh"
-	fi
-
-	if [ "${FLUSH_DISK_CACHE}" != "" ]; then
-		echo "" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "$(flush_cache)" >> "${SANDBOX_DIR}/prepare.sh"
 	fi
 
 	echo "${SANDBOX_DIR}/prepare.sh"
@@ -285,6 +307,6 @@ gitbench() {
 
 	ARGUMENTS+=("-n" "${TEST_CLI} ${1}" "bash ${TEST_RUN_SCRIPT}")
 
-#	hyperfine "${ARGUMENTS[@]}"
+	hyperfine "${ARGUMENTS[@]}"
 	rm -rf "${SANDBOX_DIR}"
 }

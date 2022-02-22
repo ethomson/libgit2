@@ -2,4 +2,4 @@
 
 . "$(dirname "$0")/benchmark_helpers.sh"
 
-gitbench --warmup 5 --repository "empty_standard_repo" --sandbox "random" hash-object "../random/10mb"
+gitbench --warmup 5 --prepare "create_random_file random_10mb 10485760" hash-object "random_10mb"
