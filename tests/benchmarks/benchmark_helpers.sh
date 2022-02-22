@@ -104,20 +104,58 @@ create_preparescript() {
 	SANDBOX_DIR="${SANDBOX_DIR}"
 	RESOURCES_DIR="$(resources_dir)"
 
-	create_random_file() {
-		filename="\${1}"
-		size="\${2}"
+	create_text_file() {
+		FILENAME="\${1}"
+		SIZE="\${2}"
 
-		if [ "\${filename}" = "" ]; then
+		if [ "\${FILENAME}" = "" ]; then
+			echo "usage: create_text_file <name> [size]" 1>&2
+			exit 1
+		fi
+
+		if [ "\${SIZE}" = "" ]; then
+			SIZE="1024"
+		fi
+
+		if [[ "\$(uname -s)" == "MINGW"* ]]; then
+			EOL="\r\n"
+			EOL_LENGTH="2"
+			CONTENTS="This is a reproducible text file. (With Unix line endings.)\n"
+		else
+			EOL="\n"
+			EOL_LENGTH="1"
+			CONTENTS="This is a reproducible text file. (With DOS line endings.)\r\n"
+		fi
+
+		rm -f "\${FILENAME:?}"
+
+		while [ "\${SIZE}" -gt "62" ]; do
+			echo -ne "\${CONTENTS}" >> "\${FILENAME}"
+			SIZE="\$((SIZE - 60))"
+		done
+
+		while [ "\${SIZE}" -gt "\${EOL_LENGTH}" ]; do
+			echo -ne "." >> "\${FILENAME}"
+			SIZE="\$((SIZE - 1))"
+		done
+
+		echo -ne "\${EOL}" >> "\${FILENAME}"
+	}
+
+	create_random_file() {
+		FILENAME="\${1}"
+		SIZE="\${2}"
+
+		if [ "\${FILENAME}" = "" ]; then
 			echo "usage: create_random_file <name> [size]" 1>&2
 			exit 1
 		fi
 
-		if [ "\${size}" = "" ]; then
-			size="1024"
+		if [ "\${SIZE}" = "" ]; then
+			SIZE="1024"
 		fi
 
-		dd if="/dev/urandom" of="\${filename}" bs="\${size}" count=1 2>/dev/null
+		dd if="/dev/urandom" of="\${FILENAME}" bs="\${SIZE}" count=1 2>/dev/null
 	}
 
 	flush_disk_cache() {
