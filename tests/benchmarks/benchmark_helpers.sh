@@ -297,10 +297,10 @@ gitbench() {
 	fi
 
 	if [ "${BASELINE_CLI}" != "" ]; then
-		ARGUMENTS+=("-n" "${BASELINE_CLI} ${1}" "bash ${BASELINE_RUN_SCRIPT}")
+		ARGUMENTS+=("-n" "${BASELINE_CLI} $*" "bash ${BASELINE_RUN_SCRIPT}")
 	fi
 
-	ARGUMENTS+=("-n" "${TEST_CLI} ${1}" "bash ${TEST_RUN_SCRIPT}")
+	ARGUMENTS+=("-n" "${TEST_CLI} $*" "bash ${TEST_RUN_SCRIPT}")
 
 	hyperfine "${ARGUMENTS[@]}"
 	rm -rf "${SANDBOX_DIR}"
