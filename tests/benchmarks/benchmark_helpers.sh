@@ -70,18 +70,18 @@ if [ "${NEXT}" != "" ]; then
 fi
 
 fullpath() {
-	path="${1}"
-	if [[ "$(uname -s)" == "MINGW"* ]]; then path="$(cygpath -u "${1}")"; fi
+	FULLPATH="${1}"
+	if [[ "$(uname -s)" == "MINGW"* ]]; then FULLPATH="$(cygpath -u "${1}")"; fi
 
-	if [[ "${path}" != *"/"* ]]; then
-                path="$(which "${path}")"
+	if [[ "${FULLPATH}" != *"/"* ]]; then
+                FULLPATH="$(which "${FULLPATH}")"
                 if [ "$?" != "0" ]; then exit 1; fi
 	else
-		path="$(echo "$(cd "$(dirname "${path}")" && pwd)/$(basename "${path}")")"
+		FULLPATH="$(cd "$(dirname "${FULLPATH}")" && pwd)/$(basename "${FULLPATH}")"
 	fi
 
-	if [[ "$(uname -s)" == "MINGW"* ]]; then path="$(cygpath -w "${path}")"; fi
-	echo "${path}"
+	if [[ "$(uname -s)" == "MINGW"* ]]; then FULLPATH="$(cygpath -w "${FULLPATH}")"; fi
+	echo "${FULLPATH}"
 }
 
 resources_dir() {
@@ -101,55 +101,70 @@ create_preparescript() {
 	cat >> "${SANDBOX_DIR}/prepare.sh" << EOF
 	set -e
 
+	SANDBOX_DIR="${SANDBOX_DIR}"
+	RESOURCES_DIR="$(resources_dir)"
+
 	create_random_file() {
-		if [ "\${1}" = "" ]; then
+		filename="\${1}"
+		size="\${2}"
+
+		if [ "\${filename}" = "" ]; then
 			echo "usage: create_random_file <name> [size]" 1>&2
 			exit 1
 		fi
 
-		if [ "\${2}" != "" ]; then
-			size="\${2}"
-		else
+		if [ "\${size}" = "" ]; then
 			size="1024"
 		fi
 
-		dd if="/dev/urandom" of="\${1}" bs="\${size}" count=1 2>/dev/null
+		dd if="/dev/urandom" of="\${filename}" bs="\${size}" count=1 2>/dev/null
 	}
 
 	flush_disk_cache() {
-		if [ "$(uname -s)" = "Darwin" ]; then
+		if [ "\$(uname -s)" = "Darwin" ]; then
 			sync && sudo purge
-		elif [ "$(uname -s)" = "Linux" ]; then
+		elif [ "\$(uname -s)" = "Linux" ]; then
 			sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
-		elif [[ "$(uname -s)" == "MINGW"* ]]; then
+		elif [[ "\$(uname -s)" == "MINGW"* ]]; then
 			PurgeStandbyList
 		fi
 	}
 
-EOF
+	sandbox() {
+		RESOURCE="\${1}"
 
-	# our run script starts by chdir'ing to the sandbox
-	echo "cd \"${SANDBOX_DIR}\"" >> "${SANDBOX_DIR}/prepare.sh"
-
-	for a in ${SANDBOX[@]}; do
-		echo "" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "# sandbox: ${a}" >> "${SANDBOX_DIR}/prepare.sh"
-		echo "cp -R \"$(resources_dir)/${a}\" \"${SANDBOX_DIR}/\"" >> "${SANDBOX_DIR}/prepare.sh"
-	done
-
-	if [ "${REPOSITORY}" != "" ]; then
-		cat >> "${SANDBOX_DIR}/prepare.sh" << EOF
-
-		# sandbox repository: ${REPOSITORY}
-		rm -rf "${SANDBOX_DIR}/${REPOSITORY}"
-		cp -R "$(resources_dir)/${REPOSITORY}" "${SANDBOX_DIR}/"
-		if [ -d "${SANDBOX_DIR}/${REPOSITORY}/.gitted" ]; then
-			mv "${SANDBOX_DIR}/${REPOSITORY}/.gitted" "${SANDBOX_DIR}/${REPOSITORY}/.git";
+		if [ "\${RESOURCE}" = "" ]; then
+			echo "usage: sandbox <path>" 1>&2
+			exit 1
 		fi
 
-		cd "${SANDBOX_DIR}/${REPOSITORY}"
+		if [ ! -d "\${RESOURCES_DIR}/\${RESOURCE}" ]; then
+			echo "sandbox: the resource \"\${RESOURCE}\" does not exist"
+			exit 1
+		fi
+
+		rm -rf "\${SANDBOX_DIR:?}/\${RESOURCE}"
+		cp -R "\${RESOURCES_DIR}/\${RESOURCE}" "\${SANDBOX_DIR}/"
+	}
+
+	sandbox_repo() {
+		RESOURCE="\${1}"
+
+		sandbox "\${RESOURCE}"
+
+		if [ -d "\${SANDBOX_DIR}/\${RESOURCE}/.gitted" ]; then
+			mv "\${SANDBOX_DIR}/\${RESOURCE}/.gitted" "\${SANDBOX_DIR}/\${RESOURCE}/.git";
+		fi
+		if [ -f "\${SANDBOX_DIR}/\${RESOURCE}/gitattributes" ]; then
+			mv "\${SANDBOX_DIR}/\${RESOURCE}/gitattributes" "\${SANDBOX_DIR}/\${RESOURCE}/.gitattributes";
+		fi
+		if [ -f "\${SANDBOX_DIR}/\${RESOURCE}/gitignore" ]; then
+			mv "\${SANDBOX_DIR}/\${RESOURCE}/gitignore" "\${SANDBOX_DIR}/\${RESOURCE}/.gitignore";
+		fi
+	}
+
+	cd "\${SANDBOX_DIR}"
 EOF
-	fi
 
 	if [ "${PREPARE}" != "" ]; then
 		echo "" >> "${SANDBOX_DIR}/prepare.sh"
@@ -160,24 +175,26 @@ EOF
 }
 
 create_runscript() {
-	script_name="${1}"; shift
-	cli_path="${1}"; shift
+	SCRIPT_NAME="${1}"; shift
+	CLI_PATH="${1}"; shift
 
-	if [ "${REPOSITORY}" != "" ]; then
-		START_DIR="${SANDBOX_DIR}/${REPOSITORY}"
+	if [[ "${CHDIR}" = "/"* ]]; then
+		START_DIR="${CHDIR}"
+	elif [ "${CHDIR}" != "" ]; then
+		START_DIR="${SANDBOX_DIR}/${CHDIR}"
 	else
 		START_DIR="${SANDBOX_DIR}"
 	fi
 
 	# our run script starts by chdir'ing to the sandbox or repository directory
-	echo -n "cd \"${START_DIR}\" && \"${cli_path}\"" >> "${SANDBOX_DIR}/${script_name}.sh"
+	echo -n "cd \"${START_DIR}\" && \"${CLI_PATH}\"" >> "${SANDBOX_DIR}/${SCRIPT_NAME}.sh"
 
 	for a in "$@"; do
-		echo -n " \"${a}\"" >> "${SANDBOX_DIR}/${script_name}.sh"
+		echo -n " \"${a}\"" >> "${SANDBOX_DIR}/${SCRIPT_NAME}.sh"
 	done
 
-	echo "" >> "${SANDBOX_DIR}/${script_name}.sh"
-	echo "${SANDBOX_DIR}/${script_name}.sh"
+	echo "" >> "${SANDBOX_DIR}/${SCRIPT_NAME}.sh"
+	echo "${SANDBOX_DIR}/${SCRIPT_NAME}.sh"
 }
 
 gitbench_usage() { echo "usage: gitbench command..."; }
@@ -189,22 +206,14 @@ gitbench_usage() { echo "usage: gitbench command..."; }
 gitbench() {
 	NEXT=
 
-	# these directories will be placed into the sandbox directory out of
-	# `tests/resources`
-	SANDBOX=()
-
-	# flush the disk cache before the test execution; this will be done after
-	# any preparation steps
-	FLUSH_DISK_CACHE=
-
-	# this test uses the given repository; the repository in `tests/resources`
-	# will be copied into place and the command will start in that directory
-	REPOSITORY=
-
 	# this test should run the given command in preparation of the tests
 	# this preparation script will be run _after_ repository creation and
 	# _before_ flushing the disk cache
 	PREPARE=
+
+	# this test should run within the given directory; this is a
+	# relative path beneath the sandbox directory.
+	CHDIR=
 
 	# this test should run `n` warmups
 	WARMUP=0
@@ -215,28 +224,21 @@ gitbench() {
 	fi
 
 	for a in "$@"; do
-		if [ "${NEXT}" = "sandbox" ]; then
-			SANDBOX+=("${a}")
-			NEXT=
-		elif [ "${NEXT}" = "warmup" ]; then
+		if [ "${NEXT}" = "warmup" ]; then
 			WARMUP="${a}"
-			NEXT=
-		elif [ "${NEXT}" = "repository" ]; then
-			REPOSITORY="${a}"
 			NEXT=
 		elif [ "${NEXT}" = "prepare" ]; then
 			PREPARE="${a}"
 			NEXT=
-		elif [ "${a}" = "--sandbox" ]; then
-			NEXT="sandbox"
+		elif [ "${NEXT}" = "chdir" ]; then
+			CHDIR="${a}"
+			NEXT=
 		elif [ "${a}" = "--warmup" ]; then
 			NEXT="warmup"
-		elif [ "${a}" = "--repository" ]; then
-			NEXT="repository"
 		elif [ "${a}" = "--prepare" ]; then
 			NEXT="prepare"
-		elif [ "${a}" = "--flush-disk-cache" ]; then
-			FLUSH_DISK_CACHE=1
+		elif [ "${a}" = "--chdir" ]; then
+			NEXT="chdir"
 		elif [[ "${a}" == "--"* ]]; then
 			echo "unknown argument: \"${a}\"" 1>&2
 			gitbench_usage 1>&2
@@ -256,7 +258,7 @@ gitbench() {
 
 	# sanity check
 
-	for a in ${SANDBOX[@]}; do
+	for a in "${SANDBOX[@]}"; do
 		if [ ! -d "$(resources_dir)/${a}" ]; then
 			echo "$0: no resource '${a}' found" 1>&2
 			exit 1
@@ -303,5 +305,5 @@ gitbench() {
 	ARGUMENTS+=("-n" "${TEST_CLI} $*" "bash ${TEST_RUN_SCRIPT}")
 
 	hyperfine "${ARGUMENTS[@]}"
-	rm -rf "${SANDBOX_DIR}"
+	rm -rf "${SANDBOX_DIR:?}"
 }

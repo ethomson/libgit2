@@ -2,4 +2,6 @@
 
 . "$(dirname "$0")/benchmark_helpers.sh"
 
-gitbench --warmup 5 --prepare "create_random_file random_1kb 1024" hash-object "random_1kb"
+gitbench --prepare "create_random_file random_1kb 1024" \
+         --warmup 5 \
+         hash-object "random_1kb"

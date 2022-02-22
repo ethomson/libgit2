@@ -2,4 +2,8 @@
 
 . "$(dirname "$0")/benchmark_helpers.sh"
 
-gitbench --prepare "create_random_file random_100kb 102400 && flush_disk_cache" hash-object "random_100kb"
+gitbench --prepare "sandbox_repo empty_standard_repo &&
+                    create_random_file random_100kb 102400 &&
+                    flush_disk_cache" \
+         --chdir "empty_standard_repo" \
+         hash-object -w "../random_100kb"
