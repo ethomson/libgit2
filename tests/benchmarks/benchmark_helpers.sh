@@ -204,10 +204,17 @@ create_preparescript() {
 	cd "\${SANDBOX_DIR}"
 EOF
 
+	echo "--start--" >> "${SANDBOX_DIR}/prepare.sh"
+	echo "date" >> "${SANDBOX_DIR}/prepare.sh"
+
 	if [ "${PREPARE}" != "" ]; then
 		echo "" >> "${SANDBOX_DIR}/prepare.sh"
 		echo "${PREPARE}" >> "${SANDBOX_DIR}/prepare.sh"
 	fi
+
+	echo "" >> "${SANDBOX_DIR}/prepare.sh"
+	echo "date" >> "${SANDBOX_DIR}/prepare.sh"
+	echo "--end--" >> "${SANDBOX_DIR}/prepare.sh"
 
 	echo "${SANDBOX_DIR}/prepare.sh"
 }
