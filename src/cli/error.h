@@ -38,18 +38,14 @@ GIT_INLINE(int) cli_error_usage(const char *fmt, ...)
 	return CLI_EXIT_USAGE;
 }
 
-GIT_INLINE(int) cli_error__git(const char *file, int line)
+GIT_INLINE(int) cli_error_git(void)
 {
 	const git_error *err = git_error_last();
-	if (err && err->message)
-		fprintf(stderr, "%s: %s\n", PROGRAM_NAME, err->message);
-	else
-		fprintf(stderr, "%s: unknown error (%s:%d)\n", PROGRAM_NAME,
-			file, line);
+	fprintf(stderr, "%s: %s\n", PROGRAM_NAME,
+	        err ? err->message : "unknown error");
 	return CLI_EXIT_GIT;
 }
 
-#define cli_error_git() cli_error__git(__FILE__, __LINE__)
 #define cli_error_os() (perror(PROGRAM_NAME), CLI_EXIT_OS)
 
 #endif /* CLI_error_h__ */
