@@ -124,3 +124,21 @@ int cli_repository_open(
 	*out = repo;
 	return 0;
 }
+
+int cli_repository_init(
+	git_repository **out,
+	const char *path,
+	bool bare,
+	cli_repository_open_options *opts)
+{
+	git_repository *repo;
+
+	if (git_repository_init(&repo, path, bare) < 0)
+		return -1;
+
+	if (opts && parse_common_options(repo, opts) < 0)
+		return -1;
+
+	*out = repo;
+	return 0;
+}

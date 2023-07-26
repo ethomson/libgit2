@@ -122,9 +122,22 @@ static void interrupt_cleanup(void)
 	exit(130);
 }
 
+static int repository_create(
+	git_repository **out,
+	const char *path,
+	int bare,
+	void *payload)
+{
+	cli_repository_open_options *init_opts =
+		(cli_repository_open_options *)payload;
+
+	return cli_repository_init(out, path, !!bare, init_opts);
+}
+
 int cmd_clone(int argc, char **argv)
 {
 	git_clone_options clone_opts = GIT_CLONE_OPTIONS_INIT;
+	cli_repository_open_options init_opts = { argv + 1, argc - 1};
 	git_repository *repo = NULL;
 	cli_opt invalid_opt;
 	char *computed_path = NULL;
@@ -146,6 +159,8 @@ int cmd_clone(int argc, char **argv)
 	clone_opts.bare = !!bare;
 	clone_opts.checkout_branch = branch;
 	clone_opts.fetch_opts.depth = compute_depth(depth);
+	clone_opts.repository_cb = repository_create;
+	clone_opts.repository_cb_payload = &init_opts;
 
 	if (!checkout)
 		clone_opts.checkout_opts.checkout_strategy = GIT_CHECKOUT_NONE;
