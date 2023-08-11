@@ -11,6 +11,8 @@
 #include "settings.h"
 #include "httpclient.h"
 
+#include "git2/version.h"
+
 #define GIT_HTTP_REPLAY_MAX 15
 
 extern bool git_http__expect_continue;
@@ -24,5 +26,10 @@ GIT_INLINE(int) git_http__user_agent(git_str *buf)
 
 	return git_str_printf(buf, "git/2.0 (%s)", ua);
 }
+
+extern int git_transport_http(
+	git_transport **out,
+	git_remote *owner,
+	void *param);
 
 #endif
