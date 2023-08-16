@@ -47,12 +47,12 @@ typedef struct {
 
 	git_vector auth_challenges;
 	git_http_auth_context *auth_context;
-} git_http_server;
+} http_server_info;
 
 typedef enum {
 	PROXY = 1,
 	SERVER
-} git_http_server_t;
+} http_server_t;
 
 typedef enum {
 	NONE = 0,
@@ -105,13 +105,13 @@ struct git_http_client {
 	git_http_client_options opts;
 
 	/* Are we writing to the proxy or server, and state of the client. */
-	git_http_server_t current_server;
+	http_server_t current_server;
 	http_client_state state;
 
 	http_parser parser;
 
-	git_http_server server;
-	git_http_server proxy;
+	http_server_info server;
+	http_server_info proxy;
 
 	unsigned request_count;
 	unsigned connected : 1,
@@ -420,7 +420,7 @@ static int on_message_complete(http_parser *parser)
 }
 
 GIT_INLINE(int) stream_write(
-	git_http_server *server,
+	http_server_info *server,
 	const char *data,
 	size_t len)
 {
@@ -513,7 +513,7 @@ static const char *challenge_for_context(
 }
 
 static const char *init_auth_context(
-	git_http_server *server,
+	http_server_info *server,
 	git_vector *challenges,
 	git_credential *credentials)
 {
@@ -536,7 +536,7 @@ static const char *init_auth_context(
 	return challenge;
 }
 
-static void free_auth_context(git_http_server *server)
+static void free_auth_context(http_server_info *server)
 {
 	if (!server->auth_context)
 		return;
@@ -549,7 +549,7 @@ static void free_auth_context(git_http_server *server)
 
 static int apply_credentials(
 	git_str *buf,
-	git_http_server *server,
+	http_server_info *server,
 	const char *header_name,
 	git_credential *credentials)
 {
@@ -791,7 +791,7 @@ static int check_certificate(
 }
 
 static int server_connect_stream(
-	git_http_server *server,
+	http_server_info *server,
 	git_transport_certificate_check_cb cert_cb,
 	void *cb_payload)
 {
@@ -811,7 +811,7 @@ static int server_connect_stream(
 	return error;
 }
 
-static void reset_auth_connection(git_http_server *server)
+static void reset_auth_connection(http_server_info *server)
 {
 	/*
 	 * If we've authenticated and we're doing "normal"
@@ -834,7 +834,7 @@ static void reset_auth_connection(git_http_server *server)
  * has changed and we need to reconnect, returns 0 otherwise.
  */
 GIT_INLINE(int) server_setup_from_url(
-	git_http_server *server,
+	http_server_info *server,
 	git_net_url *url)
 {
 	GIT_ASSERT_ARG(url);
@@ -901,7 +901,7 @@ static int setup_hosts(
 	return 0;
 }
 
-GIT_INLINE(int) server_create_stream(git_http_server *server)
+GIT_INLINE(int) server_create_stream(http_server_info *server)
 {
 	git_net_url *url = &server->url;
 
@@ -1005,7 +1005,7 @@ done:
 	return error;
 }
 
-GIT_INLINE(void) close_stream(git_http_server *server)
+GIT_INLINE(void) close_stream(http_server_info *server)
 {
 	if (server->stream) {
 		git_stream_close(server->stream);
@@ -1318,7 +1318,7 @@ int git_http_client_send_body(
 	const char *buffer,
 	size_t buffer_len)
 {
-	git_http_server *server;
+	http_server_info *server;
 	git_str hdr = GIT_STR_INIT;
 	int error;
 
@@ -1555,7 +1555,7 @@ void git_http_client_set_options(
 		memcpy(&client->opts, opts, sizeof(git_http_client_options));
 }
 
-GIT_INLINE(void) http_server_close(git_http_server *server)
+GIT_INLINE(void) http_server_close(http_server_info *server)
 {
 	if (server->stream) {
 		git_stream_close(server->stream);
