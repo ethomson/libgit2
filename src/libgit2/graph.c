@@ -174,7 +174,10 @@ on_error:
 	return -1;
 }
 
-int git_graph_descendant_of(git_repository *repo, const git_oid *commit, const git_oid *ancestor)
+int git_graph_descendant_of(
+	git_repository *repo,
+	const git_oid *commit,
+	const git_oid *ancestor)
 {
 	if (git_oid_equal(commit, ancestor))
 		return 0;
@@ -182,11 +185,11 @@ int git_graph_descendant_of(git_repository *repo, const git_oid *commit, const g
 	return git_graph_reachable_from_any(repo, ancestor, commit, 1);
 }
 
-int git_graph_reachable_from_any(
-		git_repository *repo,
-		const git_oid *commit_id,
-		const git_oid descendant_array[],
-		size_t length)
+int git_graph__reachable_from_any(
+	git_repository *repo,
+	const git_oid *commit_id,
+	const git_oid **descendants,
+	size_t length)
 {
 	git_revwalk *walk = NULL;
 	git_vector list;
@@ -200,7 +203,7 @@ int git_graph_reachable_from_any(
 		return 0;
 
 	for (i = 0; i < length; ++i) {
-		if (git_oid_equal(commit_id, &descendant_array[i]))
+		if (git_oid_equal(commit_id, descendants[i]))
 			return 1;
 	}
 
@@ -211,7 +214,7 @@ int git_graph_reachable_from_any(
 		goto done;
 
 	for (i = 0; i < length; i++) {
-		commit = git_revwalk__commit_lookup(walk, &descendant_array[i]);
+		commit = git_revwalk__commit_lookup(walk, descendants[i]);
 		if (commit == NULL) {
 			error = -1;
 			goto done;
@@ -246,4 +249,24 @@ done:
 	git_vector_free(&list);
 	git_revwalk_free(walk);
 	return error;
+}
+
+int git_graph_reachable_from_any(
+	git_repository *repo,
+	const git_oid *commit_id,
+	const git_oid descendant_array[],
+	size_t length)
+{
+	const git_oid **ptrs = NULL;
+	size_t i;
+
+	if (length) {
+		ptrs = git__calloc(length, sizeof(git_oid *));
+		GIT_ERROR_CHECK_ALLOC(ptrs);
+	}
+
+	for (i = 0; i < length; i++)
+		ptrs[i] = &descendant_array[i];
+
+	return git_graph__reachable_from_any(repo, commit_id, ptrs, length);
 }
