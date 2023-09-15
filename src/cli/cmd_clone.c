@@ -18,7 +18,7 @@
 
 #define COMMAND_NAME "clone"
 
-static char *branch, *remote_path, *local_path, *depth;
+static char *branch, *remote_path, *local_path, *depth, *upload_pack_cmd;
 static int show_help, quiet, checkout = 1, bare;
 static bool local_path_exists;
 static cli_progress progress = CLI_PROGRESS_INIT;
@@ -36,6 +36,8 @@ static const cli_opt_spec opts[] = {
 	  CLI_OPT_USAGE_DEFAULT,  "name",        "branch to check out" },
 	{ CLI_OPT_TYPE_VALUE,     "depth",       0,   &depth,       0,
 	  CLI_OPT_USAGE_DEFAULT,  "depth",       "commit depth to check out " },
+        { CLI_OPT_TYPE_VALUE,     "upload-pack", 'u', &upload_pack_cmd, 0,
+          CLI_OPT_USAGE_DEFAULT,  "upload-pack", "upload pack command to execute" },
 	{ CLI_OPT_TYPE_LITERAL },
 	{ CLI_OPT_TYPE_ARG,       "repository",   0,  &remote_path, 0,
 	  CLI_OPT_USAGE_REQUIRED, "repository",  "repository path" },
