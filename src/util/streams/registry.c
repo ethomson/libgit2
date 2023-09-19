@@ -89,6 +89,11 @@ int git_stream_register(git_stream_t type, git_stream_registration *registration
 		return -1;
 	}
 
+	if ((type & ~(GIT_STREAM_SOCKET | GIT_STREAM_TLS))) {
+		git_error_set(GIT_ERROR_INVALID, "can only register socket and tls streams");
+		return -1;
+	}
+
 	if ((type & GIT_STREAM_SOCKET) == GIT_STREAM_SOCKET)
 		stream_registration_cpy(&stream_registry.socket_callbacks, registration);
 

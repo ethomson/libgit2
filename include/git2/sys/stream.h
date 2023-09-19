@@ -23,7 +23,10 @@ typedef enum {
 	GIT_STREAM_SOCKET = 1,
 
 	/** A TLS-encrypted socket. */
-	GIT_STREAM_TLS = 2
+	GIT_STREAM_TLS = 2,
+
+	/** A process */
+	GIT_STREAM_PROCESS = 4,
 } git_stream_t;
 
 typedef struct {
