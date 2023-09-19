@@ -321,10 +321,12 @@ static int securetransport_close(git_stream *stream)
 	securetransport_stream *st = (securetransport_stream *)stream;
 	OSStatus ret;
 
-	ret = SSLClose(st->ctx);
+	if (st->ctx) {
+		ret = SSLClose(st->ctx);
 
-	if (ret != noErr && ret != errSSLClosedGraceful)
-		return securetransport_error(ret);
+		if (ret != noErr && ret != errSSLClosedGraceful)
+			return securetransport_error(ret);
+	}
 
 	return st->owned ? git_stream_close(st->io) : 0;
 }
