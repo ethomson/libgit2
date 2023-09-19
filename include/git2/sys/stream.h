@@ -15,6 +15,17 @@ GIT_BEGIN_DECL
 
 #define GIT_STREAM_VERSION 1
 
+/**
+ * The type of stream
+ */
+typedef enum {
+	/** A standard (non-TLS) socket. */
+	GIT_STREAM_SOCKET = 1,
+
+	/** A TLS-encrypted socket. */
+	GIT_STREAM_TLS = 2
+} git_stream_t;
+
 typedef struct {
 	unsigned int version;
 
@@ -58,25 +69,33 @@ typedef int git_socket_t;
 typedef struct git_stream {
 	int version;
 
-	/**
-	 * Nonzero if this is a TLS stream; zero if this is plain socket.
-	 */
-	int encrypted : 1;
+	/* Type of stream */
+	git_stream_t type;
 
 	int GIT_CALLBACK(connect)(
 		struct git_stream *,
 		const char *host,
 		const char *port,
 		const git_stream_connect_options *opts);
+
 	int GIT_CALLBACK(wrap)(
 		struct git_stream *,
 		struct git_stream *in,
 		const char *host);
-	git_socket_t GIT_CALLBACK(get_socket)(struct git_stream *);
-	int GIT_CALLBACK(certificate)(git_cert **, struct git_stream *);
+
+	git_socket_t GIT_CALLBACK(get_socket)(
+		struct git_stream *);
+
+	int GIT_CALLBACK(certificate)(
+		git_cert **,
+		struct git_stream *);
+
 	ssize_t GIT_CALLBACK(read)(struct git_stream *, void *, size_t);
+
 	ssize_t GIT_CALLBACK(write)(struct git_stream *, const char *, size_t, int);
+
 	int GIT_CALLBACK(close)(struct git_stream *);
+
 	void GIT_CALLBACK(free)(struct git_stream *);
 } git_stream;
 
@@ -92,17 +111,6 @@ typedef struct {
 	 */
 	int GIT_CALLBACK(init)(git_stream **out);
 } git_stream_registration;
-
-/**
- * The type of stream to register.
- */
-typedef enum {
-	/** A standard (non-TLS) socket. */
-	GIT_STREAM_STANDARD = 1,
-
-	/** A TLS-encrypted socket. */
-	GIT_STREAM_TLS = 2
-} git_stream_t;
 
 /**
  * Register stream constructors for the library to use

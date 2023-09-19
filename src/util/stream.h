@@ -16,6 +16,10 @@ GIT_INLINE(int) git_stream_connect(
 	const char *port,
 	const git_stream_connect_options *opts)
 {
+	GIT_ASSERT_ARG(st);
+	GIT_ASSERT(st->type == GIT_STREAM_SOCKET || st->type == GIT_STREAM_TLS);
+	GIT_ASSERT(st->connect);
+
 	return st->connect(st, host, port, opts);
 }
 
@@ -24,25 +28,32 @@ GIT_INLINE(int) git_stream_wrap(
 	git_stream *in,
 	const char *host)
 {
+	GIT_ASSERT_ARG(st);
+	GIT_ASSERT(st->type == GIT_STREAM_TLS);
+	GIT_ASSERT(st->wrap);
+
 	return st->wrap(st, in, host);
 }
 
-GIT_INLINE(int) git_stream_is_encrypted(git_stream *st)
+GIT_INLINE(git_stream_t) git_stream_type(git_stream *st)
 {
-	return st->encrypted;
+	return st->type;
 }
 
 GIT_INLINE(GIT_SOCKET) git_stream_get_socket(git_stream *st)
 {
+	GIT_ASSERT_ARG(st);
+	GIT_ASSERT(st->type == GIT_STREAM_SOCKET);
+	GIT_ASSERT(st->get_socket);
+
 	return st->get_socket(st);
 }
 
 GIT_INLINE(int) git_stream_certificate(git_cert **out, git_stream *st)
 {
-	if (!st->encrypted) {
-		git_error_set(GIT_ERROR_INVALID, "an unencrypted stream does not have a certificate");
-		return -1;
-	}
+	GIT_ASSERT_ARG(st);
+	GIT_ASSERT(st->type == GIT_STREAM_TLS);
+	GIT_ASSERT(st->certificate);
 
 	return st->certificate(out, st);
 }

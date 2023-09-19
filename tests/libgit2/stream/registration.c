@@ -9,7 +9,7 @@ static int ctor_called;
 
 void test_stream_registration__cleanup(void)
 {
-	cl_git_pass(git_stream_register(GIT_STREAM_TLS | GIT_STREAM_STANDARD, NULL));
+	cl_git_pass(git_stream_register(GIT_STREAM_TLS | GIT_STREAM_SOCKET, NULL));
 }
 
 static int test_stream_init(git_stream **out)
@@ -29,14 +29,14 @@ void test_stream_registration__insecure(void)
 	registration.init = test_stream_init;
 
 	ctor_called = 0;
-	cl_git_pass(git_stream_register(GIT_STREAM_STANDARD, &registration));
+	cl_git_pass(git_stream_register(GIT_STREAM_SOCKET, &registration));
 	cl_git_pass(git_stream_socket_new(&stream));
 	cl_assert_equal_i(1, ctor_called);
 	cl_assert_equal_p(&test_stream, stream);
 
 	ctor_called = 0;
 	stream = NULL;
-	cl_git_pass(git_stream_register(GIT_STREAM_STANDARD, NULL));
+	cl_git_pass(git_stream_register(GIT_STREAM_SOCKET, NULL));
 	cl_git_pass(git_stream_socket_new(&stream));
 
 	cl_assert_equal_i(0, ctor_called);
@@ -88,7 +88,7 @@ void test_stream_registration__both(void)
 	registration.version = 1;
 	registration.init = test_stream_init;
 
-	cl_git_pass(git_stream_register(GIT_STREAM_STANDARD | GIT_STREAM_TLS, &registration));
+	cl_git_pass(git_stream_register(GIT_STREAM_SOCKET | GIT_STREAM_TLS, &registration));
 
 	ctor_called = 0;
 	cl_git_pass(git_stream_tls_new(&stream));

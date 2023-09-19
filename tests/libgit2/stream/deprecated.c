@@ -6,7 +6,7 @@
 
 void test_stream_deprecated__cleanup(void)
 {
-	cl_git_pass(git_stream_register(GIT_STREAM_TLS | GIT_STREAM_STANDARD, NULL));
+	cl_git_pass(git_stream_register(GIT_STREAM_TLS | GIT_STREAM_SOCKET, NULL));
 }
 
 #ifndef GIT_DEPRECATE_HARD

@@ -357,7 +357,7 @@ int git_stream_securetransport_new(git_stream **out)
 	GIT_ERROR_CHECK_ALLOC(st);
 
 	st->parent.version = GIT_STREAM_VERSION;
-	st->parent.encrypted = 1;
+	st->parent.type = GIT_STREAM_TLS;
 	st->parent.connect = securetransport_connect;
 	st->parent.wrap = securetransport_wrap;
 	st->parent.certificate = securetransport_certificate;

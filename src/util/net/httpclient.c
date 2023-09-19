@@ -837,9 +837,10 @@ static int server_connect_stream(
 	if (error && error != GIT_ECERTIFICATE)
 		return error;
 
-	if (git_stream_is_encrypted(server->stream) && cert_cb != NULL)
-		error = check_certificate(server->stream, &server->url, !error,
-		                          cert_cb, cb_payload);
+	if (git_stream_type(server->stream) == GIT_STREAM_TLS &&
+	    cert_cb != NULL)
+		error = check_certificate(server->stream, &server->url,
+		                          !error, cert_cb, cb_payload);
 
 	return error;
 }

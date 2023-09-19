@@ -17,7 +17,7 @@
 
 struct stream_registry {
 	git_rwlock lock;
-	git_stream_registration callbacks;
+	git_stream_registration socket_callbacks;
 	git_stream_registration tls_callbacks;
 };
 
@@ -54,8 +54,8 @@ int git_stream_registry_lookup(git_stream_registration *out, git_stream_t type)
 	GIT_ASSERT_ARG(out);
 
 	switch(type) {
-	case GIT_STREAM_STANDARD:
-		target = &stream_registry.callbacks;
+	case GIT_STREAM_SOCKET:
+		target = &stream_registry.socket_callbacks;
 		break;
 	case GIT_STREAM_TLS:
 		target = &stream_registry.tls_callbacks;
@@ -89,8 +89,8 @@ int git_stream_register(git_stream_t type, git_stream_registration *registration
 		return -1;
 	}
 
-	if ((type & GIT_STREAM_STANDARD) == GIT_STREAM_STANDARD)
-		stream_registration_cpy(&stream_registry.callbacks, registration);
+	if ((type & GIT_STREAM_SOCKET) == GIT_STREAM_SOCKET)
+		stream_registration_cpy(&stream_registry.socket_callbacks, registration);
 
 	if ((type & GIT_STREAM_TLS) == GIT_STREAM_TLS)
 		stream_registration_cpy(&stream_registry.tls_callbacks, registration);

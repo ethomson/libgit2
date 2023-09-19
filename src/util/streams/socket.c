@@ -369,6 +369,7 @@ static int default_socket_stream_new(git_stream **out)
 	GIT_ERROR_CHECK_ALLOC(st);
 
 	st->parent.version = GIT_STREAM_VERSION;
+	st->parent.type = GIT_STREAM_SOCKET;
 	st->parent.connect = socket_connect;
 	st->parent.wrap = socket_wrap;
 	st->parent.get_socket = socket_get;
@@ -390,7 +391,7 @@ int git_stream_socket_new(git_stream **out)
 
 	GIT_ASSERT_ARG(out);
 
-	if ((error = git_stream_registry_lookup(&custom, GIT_STREAM_STANDARD)) == 0)
+	if ((error = git_stream_registry_lookup(&custom, GIT_STREAM_SOCKET)) == 0)
 		init = custom.init;
 	else if (error == GIT_ENOTFOUND)
 		init = default_socket_stream_new;
