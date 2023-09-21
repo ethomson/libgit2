@@ -14,7 +14,7 @@
 typedef struct {
 	git_stream parent;
 	git_process *process;
-	int open : 1,
+	unsigned int open : 1,
 	    owned : 1;
 } git_stream_process;
 
@@ -30,7 +30,7 @@ static ssize_t process_write(
 	GIT_ASSERT(flags == 0);
 	GIT_ASSERT(st->open == 1);
 
-	return git_process_read(st->process, (void *)data, len);
+	return git_process_write(st->process, (void *)data, len);
 }
 
 static ssize_t process_read(
@@ -42,7 +42,7 @@ static ssize_t process_read(
 
 	GIT_ASSERT(st->open == 1);
 
-	return git_process_write(st->process, data, len);
+	return git_process_read(st->process, data, len);
 }
 
 static int process_close(git_stream *stream)

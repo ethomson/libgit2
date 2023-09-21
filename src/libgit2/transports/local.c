@@ -16,6 +16,8 @@
 #include "push.h"
 #include "remote.h"
 #include "process.h"
+#include "streams/process.h"
+#include "smart_new.h"
 
 #include "git2/types.h"
 #include "git2/net.h"
@@ -37,6 +39,8 @@ typedef struct {
 	git_remote_connect_options connect_opts;
 
 	git_process *process;
+	git_stream *stream;
+	git_smart_client *client;
 
 	int connected : 1;
 } transport_local;
@@ -97,9 +101,25 @@ static int local_connect(
 	if (git_process_new_from_cmdline(&transport->process,
 			cmdline.ptr, NULL, 0,
 			&process_opts) < 0 ||
-	    git_process_start(transport->process) < 0) {
-		git_process_free(transport->process);
+	    git_stream_process_new(&transport->stream,
+			transport->process, 0) < 0 ||
+	    git_smart_client_init(&transport->client,
+			transport->owner->repo, transport->stream) < 0 ||
+	    git_process_start(transport->process) < 0)
 		goto done;
+
+	if (direction == GIT_DIRECTION_FETCH) {
+		if (git_smart_client_fetchpack(transport->client) < 0)
+			goto done;
+	} else if (direction == GIT_DIRECTION_PUSH) {
+		/* TODO
+		if (git_smart_client_sendpack() < 0)
+			goto done;
+		*/
+		abort();
+
+	} else {
+		GIT_ASSERT(!"invalid direction");
 	}
 
 	transport->connected = 1;
@@ -137,22 +157,45 @@ static int local_is_connected(git_transport *_transport)
 }
 
 static int local_capabilities(
-	unsigned int *capabilities,
+	unsigned int *out,
 	git_transport *_transport)
 {
-/*
+	unsigned int caps;
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
-	*capabilities = 0;
+	GIT_ASSERT(transport->client);
 
-	if ((transport->server_capabilities & GIT_SMART_CAPABILITY_...))
-		*capabilities |= GIT_REMOTE_CAPABILITY_TIP_OID;
+	if (git_smart_client_capabilities(&caps, transport->client) < 0)
+		return -1;
 
-	if ((transports->server_capabilities & GIT_SMART_CAP...))
-		*capabilities |= GIT_REMOTE_CAPABILITY_REACHABLE_OID;
+	*out = 0;
 
-*/
+	if ((caps & GIT_SMART_CAPABILITY_ALLOW_TIP_SHA1_IN_WANT))
+		*out |= GIT_REMOTE_CAPABILITY_TIP_OID;
+
+	if ((caps & GIT_SMART_CAPABILITY_ALLOW_REACHABLE_SHA1_IN_WANT))
+		*out |= GIT_REMOTE_CAPABILITY_TIP_OID;
+
+	return 0;
+}
+
+static int local_ls(
+	const git_remote_head ***out,
+	size_t *size,
+	git_transport *_transport)
+{
+	transport_local *transport =
+		GIT_CONTAINER_OF(_transport, transport_local, parent);
+
+/*
+	*out = (const git_remote_head **) t->heads.contents;
+	*size = t->heads.length;
+	*/
+
+*out = NULL;
+*size = 0;
+
 	return 0;
 }
 
@@ -161,7 +204,8 @@ static int local_oid_type(git_oid_t *out, git_transport *_transport)
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
-	*out = 0;
+	/* TODO */
+	*out = 42;
 
 	return 0;
 }
@@ -174,7 +218,9 @@ static int local_close(git_transport *_transport)
 	if (!transport->connected)
 		return 0;
 
+	git_stream_close(transport->stream);
 	git_process_close(transport->process);
+	git_stream_free(transport->stream);
 	git_process_free(transport->process);
 	transport->process = NULL;
 
@@ -187,6 +233,8 @@ static void local_free(git_transport *_transport)
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
+	git_smart_client_free(transport->client);
+	git_process_free(transport->process);
 	git__free(transport);
 }
 
@@ -208,6 +256,8 @@ int git_transport_local(
 	transport->parent.connect = local_connect;
 	transport->parent.set_connect_opts = local_set_connect_opts;
 	transport->parent.is_connected = local_is_connected;
+	transport->parent.capabilities = local_capabilities;
+	transport->parent.ls = local_ls;
 	transport->parent.close = local_close;
 	transport->parent.free = local_free;
 
