@@ -188,27 +188,18 @@ static int local_ls(
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
-/*
-	*out = (const git_remote_head **) t->heads.contents;
-	*size = t->heads.length;
-	*/
-
-*out = NULL;
-*size = 0;
-
-	return 0;
+	return git_smart_client_refs(out, size, transport->client);
 }
 
+#ifdef GIT_EXPERIMENTAL_SHA256
 static int local_oid_type(git_oid_t *out, git_transport *_transport)
 {
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
-	/* TODO */
-	*out = 42;
-
-	return 0;
+	return git_smart_client_oid_type(out, transport->client);
 }
+#endif
 
 static int local_close(git_transport *_transport)
 {
@@ -257,6 +248,9 @@ int git_transport_local(
 	transport->parent.set_connect_opts = local_set_connect_opts;
 	transport->parent.is_connected = local_is_connected;
 	transport->parent.capabilities = local_capabilities;
+#ifdef GIT_EXPERIMENTAL_SHA256
+	transport->parent.oid_type = local_oid_type;
+#endif
 	transport->parent.ls = local_ls;
 	transport->parent.close = local_close;
 	transport->parent.free = local_free;

@@ -88,6 +88,13 @@ int git_smart_client_fetchpack(git_smart_client *out);
 int git_smart_client_capabilities(
 	unsigned int *out,
 	git_smart_client *client);
+int git_smart_client_oid_type(
+	git_oid_t *out,
+	git_smart_client *client);
+int git_smart_client_refs(
+	const git_remote_head ***out,
+	size_t *size,
+	git_smart_client *client);
 void git_smart_client_free(git_smart_client *client);
 
 #endif

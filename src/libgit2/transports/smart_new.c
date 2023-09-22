@@ -102,7 +102,7 @@ struct pkt_parser {
 
 	pkt_parser_t type;
 
-	int read_capabilities : 1;
+	unsigned int read_capabilities : 1;
 
         /*
 	 * We buffer a chunk of data from the stream, then parse packets
@@ -135,7 +135,10 @@ struct git_smart_client {
 
 	struct pkt_parser pkt_reader;
 
+	/* TODO: unused? */
 	git_str write_buf;
+
+	unsigned int read_advertisement : 1;
 
 	/* Configurable client information */
 
@@ -146,6 +149,9 @@ struct git_smart_client {
 	const char *server_agent;
 	const char *server_session_id;
 	unsigned int server_capabilities;
+
+	git_strmap *symrefs;
+	git_array_t(git_remote_head) heads;
 };
 
 
@@ -790,7 +796,30 @@ static int handle_capability_value(
 	const char *value,
 	size_t value_len)
 {
+	const char *sep;
+	char *src, *tgt;
+	size_t src_len, tgt_len;
+
 	switch (cap->capability) {
+	case GIT_SMART_CAPABILITY_SYMREF:
+		if ((sep = memchr(value, ':', value_len)) == NULL ||
+		    (src_len = (sep - value)) == 0 ||
+		    (tgt_len = ((value_len - src_len) - 1)) == 0) {
+			git_error_set(GIT_ERROR_NET, "invalid symbolic reference mapping");
+			return -1;
+		}
+
+		src = git__strndup(value, src_len);
+		GIT_ERROR_CHECK_ALLOC(src);
+
+		tgt = git__strndup(sep + 1, tgt_len);
+		GIT_ERROR_CHECK_ALLOC(tgt);
+
+		if (git_strmap_set(client->symrefs, src, tgt) < 0)
+			return -1;
+
+		break;
+
 	case GIT_SMART_CAPABILITY_OBJECT_FORMAT:
 		if (client->oid_type) {
 			git_error_set(GIT_ERROR_NET, "invalid capabilities - duplicate object format");
@@ -825,6 +854,8 @@ static int handle_capability_value(
 		GIT_ERROR_CHECK_ALLOC(client->server_session_id);
 
 		break;
+	default:
+		GIT_ASSERT(!"unknown value capability");
 	}
 
 	return 0;
@@ -920,6 +951,10 @@ static int handle_capabilities(git_smart_client *client, const char *data, size_
 		cap_len++;
 	}
 
+	/* Set some defaults based on capabilities */
+	if (!client->oid_type)
+		client->oid_type = GIT_OID_DEFAULT;
+
 	return 0;
 }
 
@@ -945,19 +980,54 @@ int git_smart_client_init(
 
 	pkt_parser_init(&client->pkt_reader, repo, stream, PKT_PARSER_CLIENT);
 
+	if (git_strmap_new(&client->symrefs) < 0)
+		return -1;
+
 	*out = client;
+	return 0;
+}
+
+static int handle_ref(
+	git_smart_client *client,
+	struct git_smart_packet *packet)
+{
+	git_remote_head *head;
+	const char *refname, *symref_target;
+
+	GIT_ASSERT(packet && packet->type == GIT_SMART_PACKET_REF);
+
+	head = git_array_alloc(client->heads);
+	GIT_ERROR_CHECK_ALLOC(head);
+
+	if (packet->oid_len != git_oid_hexsize(client->oid_type) ||
+	    (git_oid__fromstrn(&head->oid, packet->oid, packet->oid_len, client->oid_type)) < 0) {
+		git_error_set(GIT_ERROR_NET, "invalid packet - invalid object id");
+		return -1;
+	}
+
+	head->name = git__strndup(packet->refname, packet->refname_len);
+	GIT_ERROR_CHECK_ALLOC(head->name);
+
+	if ((symref_target = git_strmap_get(client->symrefs, head->name)) != NULL) {
+		head->symref_target = git__strdup(symref_target);
+		GIT_ERROR_CHECK_ALLOC(head->symref_target);
+	}
+
+	printf("ref :: %s %s %s\n", git_oid_tostr_s(&head->oid), head->name, head->symref_target);
+
 	return 0;
 }
 
 int git_smart_client_fetchpack(git_smart_client *client)
 {
 	struct git_smart_packet *packet;
-	bool advertisement = true;
 	int error = -1;
+
+	GIT_ASSERT(!client->read_advertisement);
 
 	fprintf(debug, "fetchpack start\n");
 
-	while (advertisement) {
+	while (!client->read_advertisement) {
 		if (pkt_read(&packet, &client->pkt_reader) < 0)
 			goto done;
 
@@ -969,11 +1039,12 @@ int git_smart_client_fetchpack(git_smart_client *client)
 			    handle_capabilities(client, packet->capabilities, packet->capabilities_len) < 0)
 				goto done;
 
-			printf("%.*s - %.*s\n", (int)packet->oid_len, packet->oid, (int)packet->refname_len, packet->refname);
+			if (handle_ref(client, packet) < 0)
+				goto done;
 
 			break;
 		case GIT_SMART_PACKET_FLUSH:
-			advertisement = false;
+			client->read_advertisement = 1;
 			break;
 		default:
 			printf("huh %d/%d\n", packet->type, GIT_SMART_PACKET_REF);
@@ -993,15 +1064,57 @@ int git_smart_client_capabilities(
 	git_smart_client *client)
 {
 	GIT_ASSERT_ARG(out && client);
+	GIT_ASSERT(client->read_advertisement);
 
 	*out = (client->server_capabilities & client->capabilities);
 	return 0;
 }
 
+int git_smart_client_oid_type(
+	git_oid_t *out,
+	git_smart_client *client)
+{
+	GIT_ASSERT_ARG(out && client);
+	GIT_ASSERT(client->read_advertisement);
+
+	*out = client->oid_type;
+	return 0;
+}
+
+int git_smart_client_refs(
+	const git_remote_head ***out,
+	size_t *size,
+	git_smart_client *client)
+{
+	GIT_ASSERT_ARG(out && client);
+	GIT_ASSERT(client->read_advertisement);
+
+	*out = &client->heads.ptr;
+	*size = client->heads.size;
+
+	return 0;
+}
+
 void git_smart_client_free(git_smart_client *client)
 {
+	const char *src, *tgt;
+	git_remote_head *head;
+	size_t i;
+
 	if (!client)
 		return;
+
+	git_strmap_foreach(client->symrefs, src, tgt, {
+		git__free((char *)src);
+		git__free((char *)tgt);
+	});
+	git_strmap_free(client->symrefs);
+
+	git_array_foreach(client->heads, i, head) {
+		git__free(head->name);
+		git__free(head->symref_target);
+	}
+	git_array_dispose(client->heads);
 
 	git_str_dispose(&client->write_buf);
 	git__free(client);
