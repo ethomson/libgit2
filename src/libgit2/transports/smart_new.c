@@ -151,7 +151,7 @@ struct git_smart_client {
 	unsigned int server_capabilities;
 
 	git_strmap *symrefs;
-	git_array_t(git_remote_head) heads;
+	git_vector heads;
 };
 
 
@@ -996,7 +996,7 @@ static int handle_ref(
 
 	GIT_ASSERT(packet && packet->type == GIT_SMART_PACKET_REF);
 
-	head = git_array_alloc(client->heads);
+	head = git__calloc(1, sizeof(git_remote_head));
 	GIT_ERROR_CHECK_ALLOC(head);
 
 	if (packet->oid_len != git_oid_hexsize(client->oid_type) ||
@@ -1015,7 +1015,7 @@ static int handle_ref(
 
 	printf("ref :: %s %s %s\n", git_oid_tostr_s(&head->oid), head->name, head->symref_target);
 
-	return 0;
+	return git_vector_insert(&client->heads, head);
 }
 
 int git_smart_client_fetchpack(git_smart_client *client)
@@ -1089,8 +1089,8 @@ int git_smart_client_refs(
 	GIT_ASSERT_ARG(out && client);
 	GIT_ASSERT(client->read_advertisement);
 
-	*out = &client->heads.ptr;
-	*size = client->heads.size;
+	*out = (const git_remote_head **)client->heads.contents;
+	*size = client->heads.length;
 
 	return 0;
 }
@@ -1110,11 +1110,12 @@ void git_smart_client_free(git_smart_client *client)
 	});
 	git_strmap_free(client->symrefs);
 
-	git_array_foreach(client->heads, i, head) {
+	git_vector_foreach(&client->heads, i, head) {
 		git__free(head->name);
 		git__free(head->symref_target);
+		git__free(head);
 	}
-	git_array_dispose(client->heads);
+	git_vector_free(&client->heads);
 
 	git_str_dispose(&client->write_buf);
 	git__free(client);
