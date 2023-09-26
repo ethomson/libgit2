@@ -12,11 +12,15 @@
 #include "vector.h"
 #include "graph.h"
 #include "pack-objects.h"
+#include "revwalk.h"
+#include "oidarray.h"
 
 #include "git2/odb.h"
 #include "git2/revwalk.h"
 #include "git2/version.h"
 #include "git2/sys/refs.h"
+#include "git2/sys/transport.h"
+#include "git2/sys/remote.h"
 
 /* TODO : 1024 or something */
 #define READ_SIZE 1
@@ -93,18 +97,18 @@ static struct git_smart_packet smart_packet_internal_error = {
 
 
 typedef enum {
-	PKT_PARSER_CLIENT,
-	PKT_PARSER_SERVER
-} pkt_parser_t;
+	PKT_READER_CLIENT,
+	PKT_READER_SERVER
+} pkt_reader_t;
 
-struct pkt_parser {
+struct pkt_reader {
 	git_stream *stream;
 
-	pkt_parser_t type;
+	pkt_reader_t type;
 
 	unsigned int read_capabilities : 1;
 
-        /*
+	/*
 	 * We buffer a chunk of data from the stream, then parse packets
 	 * out of that. The `pkt` structure points inside this buffer.
 	 */
@@ -127,13 +131,26 @@ struct pkt_parser {
 	size_t remain_len;
 };
 
+struct pkt_writer {
+	git_stream *stream;
+
+	unsigned int written_capabilities : 1;
+
+	/*
+	 * We buffer a chunk of data to write, and set up packets to point to
+	 * that. The `pkt` structure points inside this buffer.
+	 */
+	git_str write_buf;
+};
+
 struct git_smart_client {
 	git_repository *repo;
 	git_oid_t oid_type;
 
 	git_stream *stream;
 
-	struct pkt_parser pkt_reader;
+	struct pkt_reader pkt_reader;
+	struct pkt_writer pkt_writer;
 
 	/* TODO: unused? */
 	git_str write_buf;
@@ -144,6 +161,8 @@ struct git_smart_client {
 
 	/* The client's (our) capabilities */
 	unsigned int capabilities;
+
+	git_array_oid_t shallow_roots;
 
 	/* Server information */
 	const char *server_agent;
@@ -187,7 +206,7 @@ static int refname_cmp(const void *_a, const void *_b)
 
 static FILE *debug;
 
-static int fill_read_buf(struct pkt_parser *parser, size_t len)
+static int fill_read_buf(struct pkt_reader *parser, size_t len)
 {
 	char *buf;
 	ssize_t ret;
@@ -221,21 +240,25 @@ static int fill_read_buf(struct pkt_parser *parser, size_t len)
 	return 0;
 }
 
-GIT_INLINE(int) pkt_parser_init(
-	struct pkt_parser *parser,
+GIT_INLINE(int) pkt_reader_init(
+	struct pkt_reader *parser,
 	git_repository *repo,
 	git_stream *stream,
-	pkt_parser_t type)
+	pkt_reader_t type)
 {
+	GIT_UNUSED(repo);
+
 	parser->stream = stream;
 	parser->type = type;
+
+	return 0;
 }
 
 /*
  * TODO: we probably don't need to do a full clear on every read.
  * Just occasionally to prevent us from having an unnecessarily large buffer.
  */
-GIT_INLINE(int) pkt_parser_reset(struct pkt_parser *parser)
+GIT_INLINE(int) pkt_reader_reset(struct pkt_reader *parser)
 {
 	GIT_ASSERT(parser->read_buf.size >= parser->pkt.len);
 
@@ -259,9 +282,9 @@ GIT_INLINE(int) pkt_parser_reset(struct pkt_parser *parser)
  * fill_read_buf may realloc our data buffer, so this is a wrapper
  * to update the positions.
  */
-GIT_INLINE(int) pkt_parser_fill(struct pkt_parser *parser, size_t len)
+GIT_INLINE(int) pkt_reader_fill(struct pkt_reader *parser, size_t len)
 {
-	fprintf(debug, "-------------pkt_parser_fill-------------\n");
+	fprintf(debug, "-------------pkt_reader_fill-------------\n");
 
 	/* TODO: sanity check arithmetic */
 	if (fill_read_buf(parser, parser->position + len) < 0)
@@ -277,7 +300,7 @@ fprintf(debug, "%d %d\n", (int)parser->read_buf.size, (int)parser->position);
 	return 0;
 }
 
-GIT_INLINE(int) pkt_parser_consume(struct pkt_parser *parser, size_t len)
+GIT_INLINE(int) pkt_reader_consume(struct pkt_reader *parser, size_t len)
 {
 	if (GIT_ADD_SIZET_OVERFLOW(&parser->position, parser->position, len))
 		return -1;
@@ -288,7 +311,7 @@ GIT_INLINE(int) pkt_parser_consume(struct pkt_parser *parser, size_t len)
 	return 0;
 }
 
-static int pkt_parse_len(struct pkt_parser *parser)
+static int pkt_parse_len(struct pkt_reader *parser)
 {
 	int64_t value;
 
@@ -320,37 +343,37 @@ static int pkt_parse_len(struct pkt_parser *parser)
 
 	fprintf(debug, "0: total_len is: %d -- parser len is: %d\n", (int)parser->total_len, (int)parser->remain_len);
 
-	pkt_parser_consume(parser, 4);
+	pkt_reader_consume(parser, 4);
 
 	fprintf(debug, "1: total_len is: %d -- parser len is: %d\n", (int)parser->total_len, (int)parser->remain_len);
 	return 0;
 }
 
-static int pkt_parse_type(struct pkt_parser *parser)
+static int pkt_parse_type(struct pkt_reader *parser)
 {
 	fprintf(debug, "parsing type: %d - '%.*s'\n", (int)parser->remain_len, (int)parser->remain_len, parser->remain_data);
 
 	if (git__prefixncmp(parser->remain_data, parser->remain_len, "want ") == 0) {
 		parser->pkt.type = GIT_SMART_PACKET_WANT;
-		return pkt_parser_consume(parser, CONST_STRLEN("want "));
+		return pkt_reader_consume(parser, CONST_STRLEN("want "));
 	}
 
 	if (git__prefixncmp(parser->remain_data, parser->remain_len, "have ") == 0) {
 		parser->pkt.type = GIT_SMART_PACKET_HAVE;
-		return pkt_parser_consume(parser, CONST_STRLEN("have "));
+		return pkt_reader_consume(parser, CONST_STRLEN("have "));
 	}
 
 		/* TODO: is this right? */
 	if (git__strncmp(parser->remain_data, "done\n", parser->remain_len) == 0) {
 		parser->pkt.type = GIT_SMART_PACKET_DONE;
-		return pkt_parser_consume(parser, CONST_STRLEN("done\n"));
+		return pkt_reader_consume(parser, CONST_STRLEN("done\n"));
 	}
 
 	git_error_set(GIT_ERROR_NET, "unknown packet type");
 	return -1;
 }
 
-GIT_INLINE(int) pkt_parse_oid(struct pkt_parser *parser)
+GIT_INLINE(int) pkt_parse_oid(struct pkt_reader *parser)
 {
 	const char *oid = parser->remain_data;
 	size_t remain = parser->remain_len, len = 0;
@@ -373,10 +396,10 @@ GIT_INLINE(int) pkt_parse_oid(struct pkt_parser *parser)
 	parser->pkt.oid = oid;
 	parser->pkt.oid_len = len;
 
-	return pkt_parser_consume(parser, len);
+	return pkt_reader_consume(parser, len);
 }
 
-static int pkt_parse_capabilities(struct pkt_parser *parser)
+static int pkt_parse_capabilities(struct pkt_reader *parser)
 {
 	const char *cap = parser->remain_data;
 	size_t remain, len = 0;
@@ -386,7 +409,7 @@ static int pkt_parse_capabilities(struct pkt_parser *parser)
 			parser->pkt.capabilities = cap;
 			parser->pkt.capabilities_len = len;
 
-			return pkt_parser_consume(parser, len);
+			return pkt_reader_consume(parser, len);
 		}
 	}
 
@@ -396,17 +419,17 @@ fprintf(debug, "remain: %d '%.*s'\n", (int)parser->remain_len, (int)parser->rema
 	return -1;
 }
 
-static int pkt_parse_char(struct pkt_parser *parser, char c, const char *name)
+static int pkt_parse_char(struct pkt_reader *parser, char c, const char *name)
 {
 	if (parser->remain_len < 1 || parser->remain_data[0] != c) {
 		git_error_set(GIT_ERROR_NET, "expected %s in packet", name);
 		return -1;
 	}
 
-	return pkt_parser_consume(parser, 1);
+	return pkt_reader_consume(parser, 1);
 }
 
-static int pkt_ensure_consumed(struct pkt_parser *parser)
+static int pkt_ensure_consumed(struct pkt_reader *parser)
 {
 	if (parser->remain_len != 0) {
 		git_error_set(GIT_ERROR_NET, "unexpected trailing packet data");
@@ -416,7 +439,7 @@ static int pkt_ensure_consumed(struct pkt_parser *parser)
 	return 0;
 }
 
-static int pkt_parse_refname(struct pkt_parser *parser)
+static int pkt_parse_refname(struct pkt_reader *parser)
 {
 	const char *name = parser->remain_data;
 	size_t remain = parser->remain_len, len = 0;
@@ -435,16 +458,16 @@ static int pkt_parse_refname(struct pkt_parser *parser)
 	parser->pkt.refname = name;
 	parser->pkt.refname_len = len;
 
-	return pkt_parser_consume(parser, len);
+	return pkt_reader_consume(parser, len);
 }
 
-static size_t pkt_parser_position(struct pkt_parser *parser)
+static size_t pkt_reader_position(struct pkt_reader *parser)
 {
 	fprintf(debug, "queried position as: %d\n", (int)parser->position);
 	return parser->position;
 }
 
-static int pkt_parser_set_position(struct pkt_parser *parser, size_t position)
+static int pkt_reader_set_position(struct pkt_reader *parser, size_t position)
 {
 	size_t diff;
 
@@ -471,7 +494,7 @@ static int pkt_parser_set_position(struct pkt_parser *parser, size_t position)
 	return 0;
 }
 
-static int pkt_parse_advance_to_char(struct pkt_parser *parser, char c)
+static int pkt_parse_advance_to_char(struct pkt_reader *parser, char c)
 {
 	size_t advanced = 0;
 
@@ -481,7 +504,7 @@ static int pkt_parse_advance_to_char(struct pkt_parser *parser, char c)
 		if (parser->remain_data[advanced] == c) {
 			fprintf(debug, "found - remain len is now %d '%.*s'\n", (int)parser->remain_len, (int)parser->remain_len, parser->remain_data );
 
-			return pkt_parser_consume(parser, advanced);
+			return pkt_reader_consume(parser, advanced);
 		}
 
 		advanced++;
@@ -490,7 +513,7 @@ static int pkt_parse_advance_to_char(struct pkt_parser *parser, char c)
 	return GIT_ENOTFOUND;
 }
 
-static int pkt_parse_ref(struct pkt_parser *parser)
+static int pkt_parse_ref(struct pkt_reader *parser)
 {
 	int error;
 
@@ -528,7 +551,7 @@ static int pkt_parse_ref(struct pkt_parser *parser)
 	return 0;
 }
 
-static int pkt_parse_want(struct pkt_parser *parser)
+static int pkt_parse_want(struct pkt_reader *parser)
 {
 fprintf(debug, "parsing want: '%.*s'\n", (int)parser->remain_len, parser->remain_data);
 fflush(debug);
@@ -565,7 +588,7 @@ fflush(debug);
 	return 0;
 }
 
-static int pkt_parse_have(struct pkt_parser *parser)
+static int pkt_parse_have(struct pkt_reader *parser)
 {
 	if (pkt_parse_oid(parser) < 0 ||
 	    pkt_parse_char(parser, '\n', "newline") < 0 ||
@@ -575,7 +598,7 @@ static int pkt_parse_have(struct pkt_parser *parser)
 	return 0;
 }
 
-int pkt_read(struct git_smart_packet **out, struct pkt_parser *parser)
+int pkt_read(struct git_smart_packet **out, struct pkt_reader *parser)
 {
 	int error;
 
@@ -587,7 +610,7 @@ int pkt_read(struct git_smart_packet **out, struct pkt_parser *parser)
 	 * pointing to that data. On every `pkt_read`, we clear the
 	 * read buffer based on the most-recently-sent packet.
 	 */
-	if (pkt_parser_reset(parser) < 0)
+	if (pkt_reader_reset(parser) < 0)
 		return -1;
 
 	fprintf(debug, "inited\n");
@@ -597,7 +620,7 @@ int pkt_read(struct git_smart_packet **out, struct pkt_parser *parser)
 	fflush(debug);
 
 	/* Fill four bytes for the size of the packet */
-	if (pkt_parser_fill(parser, 4) < 0 ||
+	if (pkt_reader_fill(parser, 4) < 0 ||
 	    pkt_parse_len(parser) < 0)
 		return -1;
 
@@ -618,7 +641,7 @@ int pkt_read(struct git_smart_packet **out, struct pkt_parser *parser)
 	fprintf(debug, "filling %d\n", (int)(parser->total_len - 4));
 	fflush(debug);
 
-	if (pkt_parser_fill(parser, parser->total_len - 4) < 0)
+	if (pkt_reader_fill(parser, parser->total_len - 4) < 0)
 		return -1;
 
 	fprintf(debug, "after fill - total_len is: %d -- parser len is: %d\n", (int)parser->total_len, (int)parser->remain_len);
@@ -628,7 +651,7 @@ int pkt_read(struct git_smart_packet **out, struct pkt_parser *parser)
 	parser->pkt.len = parser->total_len;
 
 	/* TODO: this should probably be more stateful than typed */
-	if (parser->type == PKT_PARSER_CLIENT) {
+	if (parser->type == PKT_READER_CLIENT) {
 		error = pkt_parse_ref(parser);
 	} else {
 		if (pkt_parse_type(parser) < 0)
@@ -723,72 +746,108 @@ done:
 	return error;
 }
 
-static int pkt_format_with_buf(
-	struct git_smart_packet *pkt,
-	git_str *buf,
-	git_smart_packet_t type,
-	const char *fmt,
-	...) GIT_FORMAT_PRINTF(4, 5);
+int pkt_append_capabilities(struct pkt_writer *pkt_writer)
+{
 
-int pkt_format_with_buf(
-	struct git_smart_packet *pkt,
-	git_str *buf,
+}
+
+int pkt_write(
+	struct pkt_writer *pkt_writer,
 	git_smart_packet_t type,
-	const char *fmt,
 	...)
 {
-	va_list ap = NULL;
+	const char *type_name = NULL;
+	va_list ap;
+	size_t start_pos, end_pos, len;
+	char len_str[5];
 	int error;
 
-	if (fmt)
-		va_start(ap, fmt);
+	start_pos = pkt_writer->write_buf.size;
 
-	error = pkt_format__with_buf(pkt, buf, type, fmt, ap);
+	if ((error = git_str_put(&pkt_writer->write_buf, "0000", 4)) < 0)
+		return -1;
 
-	if (fmt)
-		va_end(ap);
+	if (type == GIT_SMART_PACKET_FLUSH)
+		return 0;
+
+	va_start(ap, type);
+
+printf("YO 1: '%s'\n", pkt_writer->write_buf.ptr);
+
+	switch (type) {
+	case GIT_SMART_PACKET_NONE:
+		break;
+	case GIT_SMART_PACKET_ACK:
+		error = git_str_put(&pkt_writer->write_buf, "ACK", 3);
+		break;
+	case GIT_SMART_PACKET_NAK:
+		error = git_str_put(&pkt_writer->write_buf, "NAK", 3);
+		break;
+	case GIT_SMART_PACKET_WANT:
+		{
+			git_oid *id = va_arg(ap, const char *);
+			char id_str[GIT_OID_MAX_HEXSIZE];
+			size_t hexsize = git_oid_hexsize(git_oid_type(id));
+
+			if ((error = git_oid_fmt(id_str, id)) == 0 &&
+			    (error = git_str_put(&pkt_writer->write_buf, "want ", 5)) == 0)
+				error = git_str_put(&pkt_writer->write_buf, id_str, hexsize);
+		}
+		break;
+	case GIT_SMART_PACKET_DEEPEN:
+		{
+			int depth = va_arg(ap, int);
+			GIT_ASSERT(depth >= 0);
+
+			error = git_str_printf(&pkt_writer->write_buf, "deepen %d", depth);
+		}
+		break;
+	case GIT_SMART_PACKET_ERR:
+		{
+			const char *fmt = va_arg(ap, const git_oid *);
+
+			if ((error = git_str_put(&pkt_writer->write_buf, "ERR ", 4)) == 0)
+				error = git_str_vprintf(&pkt_writer->write_buf, fmt, ap);
+		}
+		break;
+	default:
+		git_error_set(GIT_ERROR_INVALID, "unknown packet type");
+		error = -1;
+		break;
+	}
+
+	va_end(ap);
+
+	if (error < 0)
+		return -1;
+
+	if (!pkt_writer->written_capabilities) {
+		if (pkt_append_capabilities(pkt_writer))
+			return -1;
+
+		pkt_writer->written_capabilities = 1;
+	}
+
+	if ((error = git_str_putc(&pkt_writer->write_buf, '\n')) < 0)
+		return -1;
+
+printf("YO 2: '%s'\n", pkt_writer->write_buf.ptr);
+
+	end_pos = pkt_writer->write_buf.size;
+
+	GIT_ASSERT(end_pos > start_pos);
+	len = end_pos - start_pos;
+	GIT_ASSERT(len <= 65535);
+
+	if (p_snprintf(len_str, 5, "%04x", (unsigned int)len) < 0)
+		return -1;
+
+	memcpy((pkt_writer->write_buf.ptr + start_pos), len_str, 4);
+
+printf("YO 3: '%s'\n", pkt_writer->write_buf.ptr);
 
 	return error;
 }
-
-static int pkt_format(
-	struct git_smart_packet *pkt,
-	git_smart_packet_t type,
-	const char *fmt,
-	...) GIT_FORMAT_PRINTF(3, 4);
-
-int pkt_format(
-	struct git_smart_packet *pkt,
-	git_smart_packet_t type,
-	const char *fmt,
-	...)
-{
-	git_str buf = GIT_STR_INIT;
-	va_list ap = NULL;
-	int error;
-
-	if (fmt)
-		va_start(ap, fmt);
-
-	error = pkt_format__with_buf(pkt, &buf, type, fmt, ap);
-
-	if (fmt)
-		va_end(ap);
-
-	if (error == 0)
-		pkt->owned = 1;
-	else
-		git_str_dispose(&buf);
-
-	return error;
-}
-
-static void pkt_dispose(struct git_smart_packet *pkt)
-{
-	if (pkt && pkt->owned)
-		git__free((char *)pkt->data);
-}
-
 
 static int handle_capability_value(
 	git_smart_client *client,
@@ -978,7 +1037,7 @@ int git_smart_client_init(
 	client->stream = stream;
 	client->capabilities = DEFAULT_CLIENT_CAPABILITIES;
 
-	pkt_parser_init(&client->pkt_reader, repo, stream, PKT_PARSER_CLIENT);
+	pkt_reader_init(&client->pkt_reader, repo, stream, PKT_READER_CLIENT);
 
 	if (git_strmap_new(&client->symrefs) < 0)
 		return -1;
@@ -1043,11 +1102,12 @@ int git_smart_client_fetchpack(git_smart_client *client)
 				goto done;
 
 			break;
+
 		case GIT_SMART_PACKET_FLUSH:
 			client->read_advertisement = 1;
 			break;
+
 		default:
-			printf("huh %d/%d\n", packet->type, GIT_SMART_PACKET_REF);
 			git_error_set(GIT_ERROR_NET, "unexpected packet type during ref advertisement");
 			goto done;
 		}
@@ -1057,6 +1117,354 @@ int git_smart_client_fetchpack(git_smart_client *client)
 
 done:
 	return error;
+}
+
+static int client_setup_depth(
+	git_smart_client *client,
+	const git_fetch_negotiation *wants)
+{
+	git_array_clear(client->shallow_roots);
+
+	if (wants->depth > 0) {
+		if (!(client->server_capabilities & GIT_SMART_CAPABILITY_SHALLOW)) {
+			git_error_set(GIT_ERROR_NET, "server does not support shallow");
+			return -1;
+		}
+	} else {
+		client->capabilities &= ~GIT_SMART_CAPABILITY_SHALLOW;
+	}
+
+	if (wants->shallow_roots_len > 0) {
+		git_array_init_to_size(client->shallow_roots, wants->shallow_roots_len);
+		GIT_ERROR_CHECK_ALLOC(client->shallow_roots.ptr);
+
+		memcpy(client->shallow_roots.ptr, wants->shallow_roots,
+		       sizeof(git_oid) * wants->shallow_roots_len);
+	}
+
+	return 0;
+}
+
+#if 0
+static int smart_client_setup_wants(
+	const git_fetch_negotiation *wants,
+	transport_smart_caps *caps,
+	git_str *buf)
+{
+	const git_remote_head *head;
+	char oid[GIT_OID_MAX_HEXSIZE];
+	git_oid_t oid_type;
+	size_t oid_hexsize, want_len, i = 0;
+
+#ifdef GIT_EXPERIMENTAL_SHA256
+	oid_type = wants->refs_len > 0 ? wants->refs[0]->oid.type : GIT_OID_SHA1;
+#else
+	oid_type = GIT_OID_SHA1;
+#endif
+
+	oid_hexsize = git_oid_hexsize(oid_type);
+
+	want_len = PKT_LEN_SIZE + CONST_STRLEN(PKT_WANT_PREFIX) +
+	      oid_hexsize + 1 /* LF */;
+
+	if (caps->common) {
+		for (; i < wants->refs_len; ++i) {
+			head = wants->refs[i];
+			if (!head->local)
+				break;
+		}
+
+		if (buffer_want_with_caps(wants->refs[i], caps, oid_type, buf) < 0)
+			return -1;
+
+		i++;
+	}
+
+	for (; i < wants->refs_len; ++i) {
+		head = wants->refs[i];
+
+		if (head->local)
+			continue;
+
+		git_oid_fmt(oid, &head->oid);
+
+		git_str_printf(buf, "%04x%s%.*s\n",
+			(unsigned int)want_len, PKT_WANT_PREFIX,
+			(int)oid_hexsize, oid);
+
+		if (git_str_oom(buf))
+			return -1;
+	}
+
+	/* Tell the server about our shallow objects */
+	for (i = 0; i < wants->shallow_roots_len; i++) {
+		char oid[GIT_OID_MAX_HEXSIZE + 1];
+		if (pkt_format(&pkt, client->pkt_writer, GIT_SMART_PACKET_SHALLOW, &wants->shallow_roots[i]) < 0)
+			return -1;
+
+		if (git_str_oom(buf))
+			return -1;
+	}
+
+	if (wants->depth > 0) {
+		git_str deepen_buf = GIT_STR_INIT;
+
+		git_str_printf(&deepen_buf, "deepen %d\n", wants->depth);
+		git_str_printf(buf,"%04x%s", (unsigned int)git_str_len(&deepen_buf) + 4, git_str_cstr(&deepen_buf));
+
+		git_str_dispose(&deepen_buf);
+
+		if (git_str_oom(buf))
+			return -1;
+	}
+
+	return git_pkt_buffer_flush(buf);
+}
+
+int git_smart_client_negotiate(
+	git_smart_client *client,
+	const git_fetch_negotiation *wants)
+{
+	git_revwalk__push_options opts = GIT_REVWALK__PUSH_OPTIONS_INIT;
+	git_str data = GIT_STR_INIT;
+	git_revwalk *walk = NULL;
+	struct dzk,git_smart_packet *pkt;
+	int error = -1;
+	unsigned int i;
+	git_oid oid;
+
+	opts.insert_by_date = 1;
+
+	if (client_setup_depth(client, wants) < 0 ||
+	    git_pkt_buffer_wants(wants, &t->caps, &data) < 0 ||
+		git_revwalk_new(&walk, client->repo) < 0 ||
+	    git_revwalk__push_glob(walk, "refs/*", &opts) < 0)
+		goto on_error;
+
+	if (wants->depth > 0) {
+		if ((error = git_smart__negotiation_step(&t->parent, data.ptr, data.size)) < 0)
+			goto on_error;
+
+		while ((error = pkt_read(&pkt, &client->pkt_reader)) == 0) {
+			bool complete = false;
+
+			if (pkt->type == GIT_SMART_PACKET_SHALLOW) {
+				error = git_oidarray__add(&client->shallow_roots, &pkt->oid);
+			} else if (pkt->type == GIT_SMART_PACKET_UNSHALLOW) {
+				git_oidarray__remove(&client->shallow_roots, &pkt->oid);
+			} else if (pkt->type == GIT_SMART_PACKET_FLUSH) {
+				/* Server is done, stop processing shallow oids */
+				complete = true;
+			} else {
+				git_error_set(GIT_ERROR_NET, "unexpected packet type");
+				error = -1;
+			}
+
+			if (complete || error < 0)
+				break;
+		}
+
+		if (error < 0)
+			goto on_error;
+	}
+
+	/*
+	 * Our support for ACK extensions is simply to parse them. On
+	 * the first ACK we will accept that as enough common
+	 * objects. We give up if we haven't found an answer in the
+	 * first 256 we send.
+	 */
+	i = 0;
+	while (i < 256) {
+		if ((error = git_revwalk_next(&oid, walk)) == GIT_ITEROVER)
+			break;
+		else if (error < 0)
+			goto on_error;
+
+		git_pkt_buffer_have(&oid, &data);
+		i++;
+
+		if (i % 20 == 0) {
+			if (t->cancelled.val) {
+				git_error_set(GIT_ERROR_NET, "The fetch was cancelled by the user");
+				error = GIT_EUSER;
+				goto on_error;
+			}
+
+			git_pkt_buffer_flush(&data);
+			if (git_str_oom(&data)) {
+				error = -1;
+				goto on_error;
+			}
+
+			if ((error = git_smart__negotiation_step(&t->parent, data.ptr, data.size)) < 0)
+				goto on_error;
+
+			git_str_clear(&data);
+			if (t->caps.multi_ack || t->caps.multi_ack_detailed) {
+				if ((error = store_common(t)) < 0)
+					goto on_error;
+			} else {
+				if ((error = pkt_read(&pkt, &client->pkt_reader)) < 0)
+					goto on_error;
+
+				if (pkt->type == GIT_SMART_PACKET_ACK) {
+					break;
+				} else if (pkt->type == GIT_SMART_PACKET_NAK) {
+					continue;
+				} else {
+					git_error_set(GIT_ERROR_NET, "unexpected pkt type");
+					error = -1;
+					goto on_error;
+				}
+			}
+		}
+
+		if (t->common.length > 0)
+			break;
+
+		if (i % 20 == 0 && t->rpc) {
+			git_pkt_ack *pkt;
+			unsigned int j;
+
+			if ((error = git_pkt_buffer_wants(wants, &t->caps, &data)) < 0)
+				goto on_error;
+
+			git_vector_foreach(&t->common, j, pkt) {
+				if ((error = git_pkt_buffer_have(&pkt->oid, &data)) < 0)
+					goto on_error;
+			}
+
+			if (git_str_oom(&data)) {
+				error = -1;
+				goto on_error;
+			}
+		}
+	}
+
+	/* Tell the other end that we're done negotiating */
+	if (t->rpc && t->common.length > 0) {
+		git_smart_packet *pkt;
+		unsigned int j;
+
+		if ((error = git_pkt_buffer_wants(wants, &t->caps, &data)) < 0)
+			goto on_error;
+
+		git_vector_foreach(&t->common, j, pkt) {
+			if ((error = git_pkt_buffer_have(&pkt->oid, &data)) < 0)
+				goto on_error;
+		}
+
+		if (git_str_oom(&data)) {
+			error = -1;
+			goto on_error;
+		}
+	}
+
+	if ((error = git_pkt_buffer_done(&data)) < 0)
+		goto on_error;
+
+	if (t->cancelled.val) {
+		git_error_set(GIT_ERROR_NET, "the fetch was cancelled");
+		error = GIT_EUSER;
+		goto on_error;
+	}
+
+	if ((error = git_smart__negotiation_step(&t->parent, data.ptr, data.size)) < 0)
+		goto on_error;
+
+	git_str_dispose(&data);
+	git_revwalk_free(walk);
+
+	/* Now let's eat up whatever the server gives us */
+	if (!t->caps.multi_ack && !t->caps.multi_ack_detailed) {
+		if (pkt_read(&pkt, client->pkt_reader) < 0)
+			return -1;
+
+		if (pkt->type != GIT_SMART_PACKET_ACK && pkt->type != GIT_SMART_PACKET_NAK) {
+			git_error_set(GIT_ERROR_NET, "unexpected packet type in negotiation");
+			return -1;
+		}
+	} else {
+		error = wait_while_ack(t);
+	}
+
+	return error;
+
+on_error:
+	git_revwalk_free(walk);
+	git_str_dispose(&data);
+	return error;
+}
+#endif
+
+static int client_write_wants(
+	git_smart_client *client,
+	const git_fetch_negotiation *wants)
+{
+	const git_remote_head *head;
+	char oid[GIT_OID_MAX_HEXSIZE];
+	size_t i;
+
+	for (i = 0; i < wants->refs_len; i++) {
+		head = wants->refs[i];
+
+		if (head->local)
+			continue;
+
+		// TODO: include caps on the first packet
+		if (pkt_write(&client->pkt_writer, GIT_SMART_PACKET_WANT, &head->oid) < 0)
+			return -1;
+	}
+
+	/* Tell the server about our shallow objects */
+	for (i = 0; i < wants->shallow_roots_len; i++) {
+		if (pkt_write(&client->pkt_writer, GIT_SMART_PACKET_SHALLOW, &wants->shallow_roots[i]) < 0)
+			return -1;
+	}
+
+	if (wants->depth > 0) {
+		if (pkt_write(&client->pkt_writer, GIT_SMART_PACKET_DEEPEN, wants->depth) < 0)
+			return -1;
+	}
+}
+
+int git_smart_client_negotiate(
+	git_smart_client *client,
+	const git_fetch_negotiation *wants)
+{
+	git_revwalk__push_options opts = GIT_REVWALK__PUSH_OPTIONS_INIT;
+	git_str data = GIT_STR_INIT;
+	git_revwalk *walk = NULL;
+	struct git_smart_packet *pkt;
+	int error = -1;
+	unsigned int i;
+	git_oid oid;
+
+	opts.insert_by_date = 1;
+
+	if (client_setup_depth(client, wants) < 0 ||
+		git_revwalk_new(&walk, client->repo) < 0 ||
+	    git_revwalk__push_glob(walk, "refs/*", &opts) < 0 ||
+	    client_write_wants(client, wants) < 0)
+		return -1;
+
+
+
+	pkt_write(&client->pkt_writer, GIT_SMART_PACKET_ERR, "foobar: %s %s", "hello", "world");
+	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+
+	pkt_write(&client->pkt_writer, GIT_SMART_PACKET_ERR, "bar");
+	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+
+	pkt_write(&client->pkt_writer, GIT_SMART_PACKET_ERR, "barfoo");
+	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+
+	pkt_write(&client->pkt_writer, GIT_SMART_PACKET_FLUSH);
+	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+
+	pkt_write(&pkt, &client->pkt_writer, GIT_SMART_PACKET_ERR, "zippy");
+	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
 }
 
 int git_smart_client_capabilities(

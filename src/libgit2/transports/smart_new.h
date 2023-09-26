@@ -11,6 +11,8 @@
 #include "vector.h"
 #include "oidarray.h"
 #include "stream.h"
+#include "git2/sys/transport.h"
+#include "git2/sys/remote.h"
 
 typedef enum {
 	GIT_SMART_PACKET_NONE,
@@ -19,8 +21,11 @@ typedef enum {
 	GIT_SMART_PACKET_ACK,
 	GIT_SMART_PACKET_NAK,
 	GIT_SMART_PACKET_ERR,
+	GIT_SMART_PACKET_SHALLOW,
+	GIT_SMART_PACKET_UNSHALLOW,
+	GIT_SMART_PACKET_DEEPEN,
 	GIT_SMART_PACKET_WANT,
-	GIT_SMART_PACKET_HAVE,
+	GIT_SMART_PACKET_HAVE,	
 	GIT_SMART_PACKET_DONE
 } git_smart_packet_t;
 
@@ -95,6 +100,9 @@ int git_smart_client_refs(
 	const git_remote_head ***out,
 	size_t *size,
 	git_smart_client *client);
+int git_smart_client_negotiate(
+	git_smart_client *client,
+	const git_fetch_negotiation *wants);
 void git_smart_client_free(git_smart_client *client);
 
 #endif

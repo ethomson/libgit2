@@ -201,6 +201,17 @@ static int local_oid_type(git_oid_t *out, git_transport *_transport)
 }
 #endif
 
+static int local_negotiate_fetch(
+	git_transport *_transport,
+	git_repository *repo,
+	const git_fetch_negotiation *wants)
+{
+	transport_local *transport =
+		GIT_CONTAINER_OF(_transport, transport_local, parent);
+
+	return git_smart_client_negotiate(transport->client, wants);
+}
+
 static int local_close(git_transport *_transport)
 {
 	transport_local *transport =
@@ -252,6 +263,7 @@ int git_transport_local(
 	transport->parent.oid_type = local_oid_type;
 #endif
 	transport->parent.ls = local_ls;
+	transport->parent.negotiate_fetch = local_negotiate_fetch;
 	transport->parent.close = local_close;
 	transport->parent.free = local_free;
 
