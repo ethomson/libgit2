@@ -149,11 +149,8 @@ struct git_smart_client {
 
 	git_stream *stream;
 
-	struct pkt_reader pkt_reader;
-	struct pkt_writer pkt_writer;
-
-	/* TODO: unused? */
-	git_str write_buf;
+	struct pkt_reader reader;
+	struct pkt_writer writer;
 
 	unsigned int read_advertisement : 1;
 
@@ -1037,7 +1034,7 @@ int git_smart_client_init(
 	client->stream = stream;
 	client->capabilities = DEFAULT_CLIENT_CAPABILITIES;
 
-	pkt_reader_init(&client->pkt_reader, repo, stream, PKT_READER_CLIENT);
+	pkt_reader_init(&client->reader, repo, stream, PKT_READER_CLIENT);
 
 	if (git_strmap_new(&client->symrefs) < 0)
 		return -1;
@@ -1087,7 +1084,7 @@ int git_smart_client_fetchpack(git_smart_client *client)
 	fprintf(debug, "fetchpack start\n");
 
 	while (!client->read_advertisement) {
-		if (pkt_read(&packet, &client->pkt_reader) < 0)
+		if (pkt_read(&packet, &client->reader) < 0)
 			goto done;
 
 		printf("read packet: %d (%d)\n", packet->type, GIT_SMART_PACKET_REF);
@@ -1199,7 +1196,7 @@ static int smart_client_setup_wants(
 	/* Tell the server about our shallow objects */
 	for (i = 0; i < wants->shallow_roots_len; i++) {
 		char oid[GIT_OID_MAX_HEXSIZE + 1];
-		if (pkt_format(&pkt, client->pkt_writer, GIT_SMART_PACKET_SHALLOW, &wants->shallow_roots[i]) < 0)
+		if (pkt_format(&pkt, client->writer, GIT_SMART_PACKET_SHALLOW, &wants->shallow_roots[i]) < 0)
 			return -1;
 
 		if (git_str_oom(buf))
@@ -1245,7 +1242,7 @@ int git_smart_client_negotiate(
 		if ((error = git_smart__negotiation_step(&t->parent, data.ptr, data.size)) < 0)
 			goto on_error;
 
-		while ((error = pkt_read(&pkt, &client->pkt_reader)) == 0) {
+		while ((error = pkt_read(&pkt, &client->reader)) == 0) {
 			bool complete = false;
 
 			if (pkt->type == GIT_SMART_PACKET_SHALLOW) {
@@ -1305,7 +1302,7 @@ int git_smart_client_negotiate(
 				if ((error = store_common(t)) < 0)
 					goto on_error;
 			} else {
-				if ((error = pkt_read(&pkt, &client->pkt_reader)) < 0)
+				if ((error = pkt_read(&pkt, &client->reader)) < 0)
 					goto on_error;
 
 				if (pkt->type == GIT_SMART_PACKET_ACK) {
@@ -1378,7 +1375,7 @@ int git_smart_client_negotiate(
 
 	/* Now let's eat up whatever the server gives us */
 	if (!t->caps.multi_ack && !t->caps.multi_ack_detailed) {
-		if (pkt_read(&pkt, client->pkt_reader) < 0)
+		if (pkt_read(&pkt, client->reader) < 0)
 			return -1;
 
 		if (pkt->type != GIT_SMART_PACKET_ACK && pkt->type != GIT_SMART_PACKET_NAK) {
@@ -1413,18 +1410,18 @@ static int client_write_wants(
 			continue;
 
 		// TODO: include caps on the first packet
-		if (pkt_write(&client->pkt_writer, GIT_SMART_PACKET_WANT, &head->oid) < 0)
+		if (pkt_write(&client->writer, GIT_SMART_PACKET_WANT, &head->oid) < 0)
 			return -1;
 	}
 
 	/* Tell the server about our shallow objects */
 	for (i = 0; i < wants->shallow_roots_len; i++) {
-		if (pkt_write(&client->pkt_writer, GIT_SMART_PACKET_SHALLOW, &wants->shallow_roots[i]) < 0)
+		if (pkt_write(&client->writer, GIT_SMART_PACKET_SHALLOW, &wants->shallow_roots[i]) < 0)
 			return -1;
 	}
 
 	if (wants->depth > 0) {
-		if (pkt_write(&client->pkt_writer, GIT_SMART_PACKET_DEEPEN, wants->depth) < 0)
+		if (pkt_write(&client->writer, GIT_SMART_PACKET_DEEPEN, wants->depth) < 0)
 			return -1;
 	}
 }
@@ -1451,20 +1448,20 @@ int git_smart_client_negotiate(
 
 
 
-	pkt_write(&client->pkt_writer, GIT_SMART_PACKET_ERR, "foobar: %s %s", "hello", "world");
-	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+	pkt_write(&client->writer, GIT_SMART_PACKET_ERR, "foobar: %s %s", "hello", "world");
+	printf("FORMATTED: '%s'\n", client->writer.write_buf.ptr);
 
-	pkt_write(&client->pkt_writer, GIT_SMART_PACKET_ERR, "bar");
-	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+	pkt_write(&client->writer, GIT_SMART_PACKET_ERR, "bar");
+	printf("FORMATTED: '%s'\n", client->writer.write_buf.ptr);
 
-	pkt_write(&client->pkt_writer, GIT_SMART_PACKET_ERR, "barfoo");
-	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+	pkt_write(&client->writer, GIT_SMART_PACKET_ERR, "barfoo");
+	printf("FORMATTED: '%s'\n", client->writer.write_buf.ptr);
 
-	pkt_write(&client->pkt_writer, GIT_SMART_PACKET_FLUSH);
-	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+	pkt_write(&client->writer, GIT_SMART_PACKET_FLUSH);
+	printf("FORMATTED: '%s'\n", client->writer.write_buf.ptr);
 
-	pkt_write(&pkt, &client->pkt_writer, GIT_SMART_PACKET_ERR, "zippy");
-	printf("FORMATTED: '%s'\n", client->pkt_writer.write_buf.ptr);
+	pkt_write(&pkt, &client->writer, GIT_SMART_PACKET_ERR, "zippy");
+	printf("FORMATTED: '%s'\n", client->writer.write_buf.ptr);
 }
 
 int git_smart_client_capabilities(
@@ -1525,6 +1522,6 @@ void git_smart_client_free(git_smart_client *client)
 	}
 	git_vector_free(&client->heads);
 
-	git_str_dispose(&client->write_buf);
+/* TODO : git_str_dispose(&client->write_buf); */
 	git__free(client);
 }
