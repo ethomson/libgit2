@@ -25,8 +25,13 @@ typedef enum {
 	GIT_SMART_PACKET_UNSHALLOW,
 	GIT_SMART_PACKET_DEEPEN,
 	GIT_SMART_PACKET_WANT,
-	GIT_SMART_PACKET_HAVE,	
-	GIT_SMART_PACKET_DONE
+	GIT_SMART_PACKET_HAVE,
+	GIT_SMART_PACKET_DONE,
+	GIT_SMART_PACKET_SIDEBAND_DATA,
+	GIT_SMART_PACKET_SIDEBAND_PROGRESS,
+	GIT_SMART_PACKET_SIDEBAND_ERROR,
+
+	GIT_SMART_PACKET_HAS_CAPABILITIES = (1 << 31)
 } git_smart_packet_t;
 
 typedef enum {
@@ -60,6 +65,12 @@ typedef enum {
 	GIT_SMART_CAPABILITY_SESSION_ID                   = (1 << 27)
 } git_smart_capability;
 
+enum git_smart_packet_flags {
+	GIT_SMART_PACKET_ACK_CONTINUE,
+	GIT_SMART_PACKET_ACK_COMMON,
+	GIT_SMART_PACKET_ACK_READY
+};
+
 struct git_smart_packet {
 	git_smart_packet_t type;
 
@@ -74,9 +85,15 @@ struct git_smart_packet {
 	const char *oid;
 	size_t oid_len;
 
+	enum git_smart_packet_flags flags;
+
 	/* For reference advertisements, the reference itself. */
 	const char *refname;
 	size_t refname_len;
+
+	/* TODO: unify with refname */
+	const char *sideband;
+	size_t sideband_len;
 
 	/* The first want packet includes capabilities */
 	const char *capabilities;
@@ -103,6 +120,9 @@ int git_smart_client_refs(
 int git_smart_client_negotiate(
 	git_smart_client *client,
 	const git_fetch_negotiation *wants);
+int git_smart_client_download_pack(git_smart_client *client);
+int git_smart_client_shallow_roots(git_oidarray *out, git_smart_client *client);
+int git_smart_client_cancel(git_smart_client *client);
 void git_smart_client_free(git_smart_client *client);
 
 #endif
