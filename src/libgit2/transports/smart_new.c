@@ -994,6 +994,7 @@ int pkt_write(
 	if (p_snprintf(len_str, 5, "%04x", (unsigned int)len) < 0)
 		return -1;
 
+	/* TODO: flush at a certain size */
 	memcpy((pkt_writer->write_buf.ptr + start_pos), len_str, 4);
 	return error;
 }
@@ -1455,7 +1456,7 @@ static int client_negotiate_haves(git_smart_client *client)
 	git_revwalk__push_options opts = GIT_REVWALK__PUSH_OPTIONS_INIT;
 	git_oid oid;
 	size_t i;
-	int error;
+	int error = -1;
 
 	opts.insert_by_date = 1;
 
