@@ -404,7 +404,8 @@ static int reference__create(
 
 		if (!git_object__is_valid(repo, oid, GIT_OBJECT_ANY)) {
 			git_error_set(GIT_ERROR_REFERENCE,
-				"target OID for the reference doesn't exist on the repository");
+				"cannot create reference for missing object '%s'",
+				git_oid_tostr_s(oid));
 			return -1;
 		}
 
