@@ -82,8 +82,7 @@ struct git_smart_packet {
 	int owned;
 
 	/* For reference advertisements, wants, etc. */
-	const char *oid;
-	size_t oid_len;
+	git_oid oid;
 
 	enum git_smart_packet_flags flags;
 

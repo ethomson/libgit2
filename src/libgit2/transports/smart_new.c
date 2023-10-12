@@ -99,8 +99,8 @@ static struct git_smart_packet smart_packet_internal_error = {
 
 
 typedef enum {
-	PKT_READER_CLIENT,
-	PKT_READER_SERVER
+	SMART_IO_CLIENT,
+	SMART_IO_SERVER
 } smart_io_t;
 
 struct smart_io {
@@ -111,6 +111,14 @@ struct smart_io {
 	unsigned int sent_capabilities: 1,
 	             received_capabilities : 1,
 	             received_flush : 1;
+
+	/* Remote information */
+	unsigned int capabilities;
+	char *agent;
+	char *session_id;
+	git_oid_t oid_type;
+
+	git_strmap *symrefs;
 
 	/*
 	 * We buffer our I/O and set up packet structs to point into the read
@@ -141,11 +149,10 @@ struct smart_io {
 
 struct git_smart_client {
 	git_repository *repo;
-	git_oid_t oid_type;
 
 	git_stream *stream;
 
-	struct smart_io io;
+	struct smart_io server;
 
 	unsigned int received_advertisement : 1,
 	             cancelled : 1;
@@ -157,15 +164,9 @@ struct git_smart_client {
 	const char *session_id;
 	unsigned int capabilities;
 
-	/* Server information */
-	const char *server_agent;
-	const char *server_session_id;
-	unsigned int server_capabilities;
-
 	/* Negotiation data */
 	git_array_oid_t shallow_roots;
 
-	git_strmap *symrefs;
 	git_vector heads;
 };
 
@@ -214,7 +215,28 @@ GIT_INLINE(int) smart_io_init(
 	io->stream = stream;
 	io->type = type;
 
+	if (type == SMART_IO_CLIENT && git_strmap_new(&io->symrefs) < 0)
+		return -1;
+
+	printf("hmm: %d\n", git_repository_oid_type(repo));
+
 	return 0;
+}
+
+GIT_INLINE(void) smart_io_dispose(struct smart_io *io)
+{
+	const char *src, *tgt;
+
+	git__free(io->agent);
+	git__free(io->session_id);
+
+	if (io->type == SMART_IO_CLIENT) {
+		git_strmap_foreach(io->symrefs, src, tgt, {
+			git__free((char *)src);
+			git__free((char *)tgt);
+		});
+		git_strmap_free(io->symrefs);
+	}
 }
 
 GIT_INLINE(int) smart_io_reader_reset(struct smart_io *io)
@@ -396,11 +418,11 @@ static int pkt_parse_type(struct smart_io *io)
 	return -1;
 }
 
-/* TODO: we need to get crisp about oid type early in the process */
 GIT_INLINE(int) pkt_parse_oid(struct smart_io *io)
 {
 	const char *oid = io->read_remain_data;
 	size_t remain = io->read_remain_len, len = 0;
+	git_oid_t oid_type = io->oid_type ? io->oid_type : GIT_OID_DEFAULT;
 
 	while (remain > 0) {
 		char c = io->read_remain_data[len];
@@ -417,23 +439,189 @@ GIT_INLINE(int) pkt_parse_oid(struct smart_io *io)
 		len++;
 	}
 
-	io->read_pkt.oid = oid;
-	io->read_pkt.oid_len = len;
+	if (len != git_oid_hexsize(oid_type)) {
+		git_error_set(GIT_ERROR_NET, "invalid packet - invalid object id");
+		return -1;
+	}
+
+	if (git_oid__fromstrn(&io->read_pkt.oid, oid, len, oid_type) < 0)
+		return -1;
 
 	return smart_io_reader_consume(io, len);
 }
 
+
+static int parse_capability_value(
+	struct smart_io *io,
+	const smart_capability_name *cap,
+	const char *value,
+	size_t value_len)
+{
+	const char *sep;
+	char *src, *tgt;
+	size_t src_len, tgt_len;
+
+	switch (cap->capability) {
+	case GIT_SMART_CAPABILITY_SYMREF:
+		if ((sep = memchr(value, ':', value_len)) == NULL ||
+		    (src_len = (sep - value)) == 0 ||
+		    (tgt_len = ((value_len - src_len) - 1)) == 0) {
+			git_error_set(GIT_ERROR_NET, "invalid symbolic reference mapping");
+			return -1;
+		}
+
+		src = git__strndup(value, src_len);
+		GIT_ERROR_CHECK_ALLOC(src);
+
+		tgt = git__strndup(sep + 1, tgt_len);
+		GIT_ERROR_CHECK_ALLOC(tgt);
+
+		if (git_strmap_set(io->symrefs, src, tgt) < 0)
+			return -1;
+
+		break;
+
+	case GIT_SMART_CAPABILITY_OBJECT_FORMAT:
+		if (io->oid_type) {
+			git_error_set(GIT_ERROR_NET, "invalid capabilities - duplicate object format");
+			return -1;
+		}
+
+		if ((io->oid_type = git_oid_type_fromstrn(value, value_len)) == 0) {
+			git_error_set(GIT_ERROR_NET, "unknown object format from server");
+			return -1;
+		}
+
+		break;
+
+	case GIT_SMART_CAPABILITY_AGENT:
+		if (io->agent) {
+			git_error_set(GIT_ERROR_NET, "invalid capabilities - duplicate agent");
+			return -1;
+		}
+
+		io->agent = git__strndup(value, value_len);
+		GIT_ERROR_CHECK_ALLOC(io->agent);
+
+		break;
+
+	case GIT_SMART_CAPABILITY_SESSION_ID:
+		if (io->session_id) {
+			git_error_set(GIT_ERROR_NET, "invalid capabilities - duplicate session id");
+			return -1;
+		}
+
+		io->session_id = git__strndup(value, value_len);
+		GIT_ERROR_CHECK_ALLOC(io->session_id);
+
+		break;
+	default:
+		GIT_ASSERT(!"unknown value capability");
+	}
+
+	return 0;
+}
+
+static int parse_capability(struct smart_io *io, const char *data, size_t len)
+{
+	const smart_capability_name *cap, *match = NULL;
+	const char *value = NULL;
+	size_t key_len, value_len;
+	bool reject_unknown = false;
+
+	fprintf(debug, "cap is: '%.*s'\n", (int)len, data);
+
+	for (cap = smart_capabilities; cap->capability && !match; cap++) {
+		switch(cap->capability) {
+		case GIT_SMART_CAPABILITY_SYMREF:
+		case GIT_SMART_CAPABILITY_OBJECT_FORMAT:
+		case GIT_SMART_CAPABILITY_AGENT:
+		case GIT_SMART_CAPABILITY_SESSION_ID:
+			if (git__prefixncmp(data, len, cap->name) != 0)
+				break;
+
+			if ((key_len = strlen(cap->name)) == len) {
+				git_error_set(GIT_ERROR_NET, "server sent capability without value: '%s'", cap->name);
+				return -1;
+			}
+
+			if (data[key_len] != '=')
+				break;
+
+			match = cap;
+			value = &data[key_len + 1];
+			value_len = len - (key_len + 1);
+
+			if (parse_capability_value(io, cap, value, value_len) < 0)
+				return -1;
+
+			break;
+
+		default:
+			if (strncmp(data, cap->name, len) == 0)
+				match = cap;
+
+			break;
+		}
+
+		if (match)
+			break;
+	}
+
+	if (!match && reject_unknown) {
+		git_error_set(GIT_ERROR_NET, "server sent unknown capability: '%.*s'", (int)len, data);
+		return -1;
+	}
+
+	if ((DISALLOWED_SERVER_CAPABILITIES & cap->capability) != 0) {
+		git_error_set(GIT_ERROR_NET, "server sent disallowed capability: '%s'", cap->name);
+		return -1;
+	}
+
+	io->capabilities |= cap->capability;
+
+	fprintf(debug, "consumed cap : %" PRIuZ "\n", len);
+
+	return 0;
+}
+
 static int pkt_parse_capabilities(struct smart_io *io)
 {
-	const char *cap = io->read_remain_data;
-	size_t remain, len = 0;
+	const char *capabilities = io->read_remain_data, *cap = io->read_remain_data;
+	size_t remain, capabilities_len = 0, cap_len = 0;
 
-	for (remain = io->read_remain_len; remain > 0; remain--, len++) {
-		if (cap[len] == '\n') {
-			io->read_pkt.capabilities = cap;
-			io->read_pkt.capabilities_len = len;
+	for (remain = io->read_remain_len; remain > 0; remain--, capabilities_len++) {
+		if (capabilities[capabilities_len] != ' ' &&
+		    capabilities[capabilities_len] != '\n') {
+			cap_len++;
+			continue;
+		}
 
-			return smart_io_reader_consume(io, len);
+		if (!cap_len)
+			break;
+
+		if (parse_capability(io, cap, cap_len) < 0)
+			return -1;
+
+		if (capabilities[capabilities_len] == ' ') {
+			if (!remain)
+				break;
+
+			cap = &capabilities[capabilities_len + 1];
+			cap_len = 0;
+		}
+
+		if (capabilities[capabilities_len] == '\n') {
+			io->read_pkt.capabilities = capabilities;
+			io->read_pkt.capabilities_len = capabilities_len;
+
+printf("capabilities: %d\n", io->capabilities);
+printf("server session id: %s\n", io->session_id);
+printf("server agent: %s\n", io->agent);
+printf("oid type: %d\n", io->oid_type);
+
+
+			return smart_io_reader_consume(io, capabilities_len);
 		}
 	}
 
@@ -555,32 +743,46 @@ static int pkt_parse_advance_to_char(struct smart_io *io, char c)
 
 static int pkt_parse_ref(struct smart_io *io)
 {
+	size_t end_position = 0;
+	int error;
+
 	fprintf(debug, "parsing ref: %d - '%.*s\n", (int)io->read_remain_len, (int)io->read_remain_len, io->read_remain_data);
 
 	io->read_pkt.type = GIT_SMART_PACKET_REF;
+
+	/*
+	 * Since capabilities contain the remote's object-format, we need to
+	 * parse it first so that we know what OID type we're reading. This
+	 * requires us to store and reset our position pointer.
+	 */
+	if (!io->received_capabilities) {
+		size_t original_position = smart_io_reader_position(io);
+
+		if ((error = pkt_parse_advance_to_char(io, '\0')) == 0) {
+			if (smart_io_reader_consume(io, 1) < 0 ||
+				pkt_parse_capabilities(io) < 0)
+				return -1;
+
+			end_position = smart_io_reader_position(io);
+
+			if (smart_io_reader_set_position(io, original_position) < 0)
+				return -1;
+		} else if (error != GIT_ENOTFOUND) {
+			return -1;
+		}
+
+		io->received_capabilities = 1;
+	}
 
 	if (pkt_parse_oid(io) < 0 ||
 	    pkt_parse_char(io, ' ', "space") < 0 ||
 	    pkt_parse_refname(io) < 0)
 		return -1;
 
-	/* since capabilities contain the remote's object-format, we need to
-	 * parse it first so that we know what oid type we're reading.
-	 */
-	if (!io->received_capabilities) {
-		if (pkt_parse_char(io, '\0', NULL) == 0) {
-			fprintf(debug, "found NUL\n");
-
-			if (pkt_parse_capabilities(io) < 0)
-				return -1;
-
-			fprintf(debug, "caps are: '%.*s'\n", (int)io->read_pkt.capabilities_len, io->read_pkt.capabilities);
-		}
-
-		io->received_capabilities = 1;
-	}
-
-	printf("yo: %d - '%.*s\n", (int)io->read_remain_len, (int)io->read_remain_len, io->read_remain_data);
+	/* Reset to the end of the message if we had capabilities */
+	if (end_position &&
+	    smart_io_reader_set_position(io, end_position) < 0)
+		return -1;
 
 	if (pkt_parse_char(io, '\n', "newline") < 0 ||
 	    pkt_ensure_consumed(io) < 0)
@@ -727,7 +929,7 @@ int pkt_read(struct git_smart_packet **out, struct smart_io *io)
 
 	/* TODO: this should probably be more stateful than typed */
 	/* maybe separate into read_client and read_server */
-	if (io->type == PKT_READER_CLIENT && !io->received_flush) {
+	if (io->type == SMART_IO_CLIENT && !io->received_flush) {
 		error = pkt_parse_ref(io);
 	} else {
 		if (pkt_parse_type(io) < 0)
@@ -833,11 +1035,8 @@ done:
 	return error;
 }
 
-/* TODO: for symmetry, sort of feels like we should take a string of preformatted capabilities here
- * or make the pkt reader do the parsing.
- */
-int pkt_append_capabilities(
-	struct smart_io *io,
+static int fmt_capabilities(
+	git_str *out,
 	unsigned int capabilities,
 	const char *agent,
 	const char *session_id)
@@ -848,18 +1047,23 @@ int pkt_append_capabilities(
 	for (i = 0; (name = smart_capabilities[i].name) != NULL; i++) {
 		const char *value = NULL;
 
+		if ((capabilities & smart_capabilities[i].capability) == 0)
+			continue;
+
 		if (smart_capabilities[i].capability == GIT_SMART_CAPABILITY_AGENT && !(value = agent))
 			continue;
 		
 		if (smart_capabilities[i].capability == GIT_SMART_CAPABILITY_SESSION_ID && !(value = session_id))
 			continue;
 
-		git_str_putc(&io->write_buf, i ? ' ' : '.');
-		git_str_puts(&io->write_buf, name);
+		if (i)
+			git_str_putc(out, ' ');
+
+		git_str_puts(out, name);
 
 		if (value) {
-			git_str_putc(&io->write_buf, '=');
-			git_str_puts(&io->write_buf, value);
+			git_str_putc(out, '=');
+			git_str_puts(out, value);
 		}
 	}
 
@@ -867,7 +1071,7 @@ int pkt_append_capabilities(
 	printf("agent: %s\n", agent);
 	printf("session_id: %s\n", session_id);
 
-	return git_str_oom(&io->write_buf) ? -1 : 0;
+	return git_str_oom(out) ? -1 : 0;
 }
 
 int pkt_write(
@@ -945,7 +1149,8 @@ int pkt_write(
 			const char *agent = va_arg(ap, const char *);
 			const char *session_id = va_arg(ap, const char *);
 
-			error = pkt_append_capabilities(io, capabilities, agent, session_id);
+			if ((error = git_str_putc(&io->write_buf, '.')) == 0)
+				error = fmt_capabilities(&io->write_buf, capabilities, agent, session_id);
 		}
 
 		io->sent_capabilities = 1;
@@ -982,174 +1187,6 @@ static int pkt_writer_flush(struct smart_io *io)
 	return 0;
 }
 
-static int handle_capability_value(
-	git_smart_client *client,
-	const smart_capability_name *cap,
-	const char *value,
-	size_t value_len)
-{
-	const char *sep;
-	char *src, *tgt;
-	size_t src_len, tgt_len;
-
-	switch (cap->capability) {
-	case GIT_SMART_CAPABILITY_SYMREF:
-		if ((sep = memchr(value, ':', value_len)) == NULL ||
-		    (src_len = (sep - value)) == 0 ||
-		    (tgt_len = ((value_len - src_len) - 1)) == 0) {
-			git_error_set(GIT_ERROR_NET, "invalid symbolic reference mapping");
-			return -1;
-		}
-
-		src = git__strndup(value, src_len);
-		GIT_ERROR_CHECK_ALLOC(src);
-
-		tgt = git__strndup(sep + 1, tgt_len);
-		GIT_ERROR_CHECK_ALLOC(tgt);
-
-		if (git_strmap_set(client->symrefs, src, tgt) < 0)
-			return -1;
-
-		break;
-
-	case GIT_SMART_CAPABILITY_OBJECT_FORMAT:
-		if (client->oid_type) {
-			git_error_set(GIT_ERROR_NET, "invalid capabilities - duplicate object format");
-			return -1;
-		}
-
-		if ((client->oid_type = git_oid_type_fromstrn(value, value_len)) == 0) {
-			git_error_set(GIT_ERROR_NET, "unknown object format from server");
-			return -1;
-		}
-
-		break;
-
-	case GIT_SMART_CAPABILITY_AGENT:
-		if (client->server_agent) {
-			git_error_set(GIT_ERROR_NET, "invalid capabilities - duplicate agent");
-			return -1;
-		}
-
-		client->server_agent = git__strndup(value, value_len);
-		GIT_ERROR_CHECK_ALLOC(client->server_agent);
-
-		break;
-
-	case GIT_SMART_CAPABILITY_SESSION_ID:
-		if (client->server_session_id) {
-			git_error_set(GIT_ERROR_NET, "invalid capabilities - duplicate session id");
-			return -1;
-		}
-
-		client->server_session_id = git__strndup(value, value_len);
-		GIT_ERROR_CHECK_ALLOC(client->server_session_id);
-
-		break;
-	default:
-		GIT_ASSERT(!"unknown value capability");
-	}
-
-	return 0;
-}
-
-static int handle_capability(git_smart_client *client, const char *data, size_t len)
-{
-	const smart_capability_name *cap, *match = NULL;
-	const char *value = NULL;
-	size_t key_len, value_len;
-	bool reject_unknown = false, reject_unsupported = false;
-
-	fprintf(debug, "cap is: '%.*s'\n", (int)len, data);
-
-	for (cap = smart_capabilities; cap->capability && !match; cap++) {
-		switch(cap->capability) {
-		case GIT_SMART_CAPABILITY_SYMREF:
-		case GIT_SMART_CAPABILITY_OBJECT_FORMAT:
-		case GIT_SMART_CAPABILITY_AGENT:
-		case GIT_SMART_CAPABILITY_SESSION_ID:
-			if (git__prefixncmp(data, len, cap->name) != 0)
-				break;
-
-			if ((key_len = strlen(cap->name)) == len) {
-				git_error_set(GIT_ERROR_NET, "server sent capability without value: '%s'", cap->name);
-				return -1;
-			}
-
-			if (data[key_len] != '=')
-				break;
-
-			match = cap;
-			value = &data[key_len + 1];
-			value_len = len - (key_len + 1);
-
-			if (handle_capability_value(client, cap, value, value_len) < 0)
-				return -1;
-
-			break;
-
-		default:
-			if (strncmp(data, cap->name, len) == 0)
-				match = cap;
-
-			break;
-		}
-
-		if (match)
-			break;
-	}
-
-	if (!match && reject_unknown) {
-		git_error_set(GIT_ERROR_NET, "server sent unknown capability: '%.*s'", (int)len, data);
-		return -1;
-	}
-
-	if ((client->capabilities & cap->capability) == 0 &&
-	    reject_unsupported) {
-		git_error_set(GIT_ERROR_NET, "server sent unsupported capability: '%s'", cap->name);
-		return -1;
-	}
-
-	if ((DISALLOWED_SERVER_CAPABILITIES & cap->capability) != 0) {
-		git_error_set(GIT_ERROR_NET, "server sent disallowed capability: '%s'", cap->name);
-		return -1;
-	}
-
-	client->server_capabilities |= cap->capability;
-
-	fprintf(debug, "consumed cap : %" PRIuZ "\n", len);
-
-	return 0;
-}
-
-static int handle_capabilities(git_smart_client *client, const char *data, size_t len)
-{
-	const char *cap = data;
-	size_t cap_len = 0, position = 0;
-
-	printf("hi\n");
-
-	while (position <= len) {
-		if (position == len || data[position] == ' ') {
-			if (handle_capability(client, cap, cap_len) < 0)
-				return -1;
-
-			cap = position == len ? NULL : data + position + 1;
-			position++;
-			cap_len = 0;
-		}
-
-		position++;
-		cap_len++;
-	}
-
-	/* Set some defaults based on capabilities */
-	if (!client->oid_type)
-		client->oid_type = GIT_OID_DEFAULT;
-
-	return 0;
-}
-
 int git_smart_client_init(
 	git_smart_client **out,
 	git_repository *repo,
@@ -1170,13 +1207,14 @@ int git_smart_client_init(
 	client->stream = stream;
 	client->capabilities = DEFAULT_CLIENT_CAPABILITIES;
 
+client->capabilities &= ~GIT_SMART_CAPABILITY_SIDE_BAND;
+client->capabilities &= ~GIT_SMART_CAPABILITY_SIDE_BAND_64K;
+
 	/* TODO */
 	client->agent = "libgit2/1.2.3.4.(hello.world)";
 	client->session_id = "opaque-session-id";
 
-	smart_io_init(&client->io, repo, stream, PKT_READER_CLIENT);
-
-	if (git_strmap_new(&client->symrefs) < 0)
+	if (smart_io_init(&client->server, repo, stream, SMART_IO_CLIENT) < 0)
 		return -1;
 
 	*out = client;
@@ -1195,16 +1233,15 @@ static int handle_ref(
 	head = git__calloc(1, sizeof(git_remote_head));
 	GIT_ERROR_CHECK_ALLOC(head);
 
-	if (packet->oid_len != git_oid_hexsize(client->oid_type) ||
-	    (git_oid__fromstrn(&head->oid, packet->oid, packet->oid_len, client->oid_type)) < 0) {
-		git_error_set(GIT_ERROR_NET, "invalid packet - invalid object id");
+	if (git_oid_cpy(&head->oid, &packet->oid) < 0) {
+		git__free(head);
 		return -1;
 	}
 
 	head->name = git__strndup(packet->refname, packet->refname_len);
 	GIT_ERROR_CHECK_ALLOC(head->name);
 
-	if ((symref_target = git_strmap_get(client->symrefs, head->name)) != NULL) {
+	if ((symref_target = git_strmap_get(client->server.symrefs, head->name)) != NULL) {
 		head->symref_target = git__strdup(symref_target);
 		GIT_ERROR_CHECK_ALLOC(head->symref_target);
 	}
@@ -1217,6 +1254,7 @@ static int handle_ref(
 int git_smart_client_fetchpack(git_smart_client *client)
 {
 	struct git_smart_packet *packet;
+	git_str caps = GIT_STR_INIT;
 	int error = -1;
 
 	GIT_ASSERT(!client->received_advertisement);
@@ -1224,15 +1262,11 @@ int git_smart_client_fetchpack(git_smart_client *client)
 	fprintf(debug, "fetchpack start\n");
 
 	while (!client->received_advertisement) {
-		if (pkt_read(&packet, &client->io) < 0)
+		if (pkt_read(&packet, &client->server) < 0)
 			goto done;
 
 		switch (packet->type) {
 		case GIT_SMART_PACKET_REF:
-			if (packet->capabilities &&
-			    handle_capabilities(client, packet->capabilities, packet->capabilities_len) < 0)
-				goto done;
-
 			if (handle_ref(client, packet) < 0)
 				goto done;
 
@@ -1248,9 +1282,29 @@ int git_smart_client_fetchpack(git_smart_client *client)
 		}
 	}
 
+	/* Set the common capabilities between the client and the server */
+git_str_clear(&caps);
+fmt_capabilities(&caps, DEFAULT_CLIENT_CAPABILITIES, NULL, NULL);
+printf("capabilities were: %d %s\n", client->capabilities, caps.ptr);
+
+git_str_clear(&caps);
+fmt_capabilities(&caps, client->capabilities, client->agent, client->session_id);
+printf("capabilities were: %d %s\n", client->capabilities, caps.ptr);
+
+git_str_clear(&caps);
+fmt_capabilities(&caps, client->server.capabilities, client->server.agent, client->server.session_id);
+printf("server capabilities: %d %s\n", client->server.capabilities, caps.ptr);
+
+
+	client->capabilities &= client->server.capabilities;
+git_str_clear(&caps);
+fmt_capabilities(&caps, client->capabilities, client->agent, client->session_id);
+printf("updated: %d %s\n", client->capabilities, caps.ptr);
+
 	error = 0;
 
 done:
+	git_str_dispose(&caps);
 	return error;
 }
 
@@ -1261,7 +1315,7 @@ static int client_setup_depth(
 	git_array_clear(client->shallow_roots);
 
 	if (wants->depth > 0) {
-		if (!(client->server_capabilities & GIT_SMART_CAPABILITY_SHALLOW)) {
+		if (!(client->server.capabilities & GIT_SMART_CAPABILITY_SHALLOW)) {
 			git_error_set(GIT_ERROR_NET, "server does not support shallow");
 			return -1;
 		}
@@ -1368,7 +1422,7 @@ static int client_negotiate_wants(
 		if (head->local)
 			continue;
 
-		if (pkt_write(&client->io,
+		if (pkt_write(&client->server,
 				GIT_SMART_PACKET_WANT | GIT_SMART_PACKET_HAS_CAPABILITIES,
 				&head->oid,
 				client->capabilities,
@@ -1379,7 +1433,7 @@ static int client_negotiate_wants(
 
 	/* Tell the server about our shallow objects */
 	for (i = 0; i < wants->shallow_roots_len; i++) {
-		if (pkt_write(&client->io, GIT_SMART_PACKET_SHALLOW, &wants->shallow_roots[i]) < 0)
+		if (pkt_write(&client->server, GIT_SMART_PACKET_SHALLOW, &wants->shallow_roots[i]) < 0)
 			return -1;
 	}
 
@@ -1391,30 +1445,24 @@ static int client_negotiate_depth(
 	const git_fetch_negotiation *wants)
 {
 	struct git_smart_packet *pkt;
-	git_oid oid;
 	bool complete = false;
 	int error;
 
 	if (!wants->depth)
 		return 0;
 
-	if (pkt_write(&client->io, GIT_SMART_PACKET_DEEPEN, wants->depth) < 0 ||
-	    pkt_writer_flush(&client->io) < 0)
+	if (pkt_write(&client->server, GIT_SMART_PACKET_DEEPEN, wants->depth) < 0 ||
+	    pkt_writer_flush(&client->server) < 0)
 		return -1;
 
 	while (!complete && !error &&
-	       !(error = pkt_read(&pkt, &client->io))) {
+	       !(error = pkt_read(&pkt, &client->server))) {
 		switch (pkt->type) {
 		case GIT_SMART_PACKET_SHALLOW:
-			/* TODO: ensure that oid_len is correct */
-			if ((error = git_oid_fromstrn(&oid, pkt->oid, pkt->oid_len)) == 0)
-				error = git_oidarray__add(&client->shallow_roots, &oid);
+			error = git_oidarray__add(&client->shallow_roots, &pkt->oid);
 			break;
 		case GIT_SMART_PACKET_UNSHALLOW:
-			/* TODO: ensure that oid_len is correct */
-
-			if ((error = git_oid_fromstrn(&oid, pkt->oid, pkt->oid_len)) == 0)
-				error = git_oidarray__remove(&client->shallow_roots, &oid);
+			error = git_oidarray__remove(&client->shallow_roots, &pkt->oid);
 			break;
 		case GIT_SMART_PACKET_FLUSH:
 			complete = true;
@@ -1455,7 +1503,7 @@ static int client_negotiate_haves(git_smart_client *client)
 		else if (error < 0)
 			return -1;
 
-		if (pkt_write(&client->io, GIT_SMART_PACKET_HAVE,
+		if (pkt_write(&client->server, GIT_SMART_PACKET_HAVE,
 				GIT_SMART_PACKET_HAVE,
 				&oid) < 0)
 			return -1;
@@ -1470,12 +1518,12 @@ static int client_negotiate_haves(git_smart_client *client)
 				goto done;
 			}
 
-			if (pkt_write(&client->io, GIT_SMART_PACKET_FLUSH) < 0 ||
-			    pkt_writer_flush(&client->io) < 0)
+			if (pkt_write(&client->server, GIT_SMART_PACKET_FLUSH) < 0 ||
+			    pkt_writer_flush(&client->server) < 0)
 				return -1;
 
 			while (reading_acks) {
-				if (pkt_read(&response_pkt, &client->io) < 0)
+				if (pkt_read(&response_pkt, &client->server) < 0)
 					return -1;
 
 				if ((client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED)) {
@@ -1538,8 +1586,8 @@ done:
 
 static int client_negotiate_flush(git_smart_client *client)
 {
-	if (pkt_write(&client->io, GIT_SMART_PACKET_FLUSH) < 0 ||
-	    pkt_writer_flush(&client->io) < 0)
+	if (pkt_write(&client->server, GIT_SMART_PACKET_FLUSH) < 0 ||
+	    pkt_writer_flush(&client->server) < 0)
 		return -1;
 
 	return 0;
@@ -1547,8 +1595,8 @@ static int client_negotiate_flush(git_smart_client *client)
 
 static int client_negotiate_done(git_smart_client *client)
 {
-	if (pkt_write(&client->io, GIT_SMART_PACKET_DONE) < 0 ||
-	    pkt_writer_flush(&client->io) < 0)
+	if (pkt_write(&client->server, GIT_SMART_PACKET_DONE) < 0 ||
+	    pkt_writer_flush(&client->server) < 0)
 		return -1;
 
 	return 0;
@@ -1568,7 +1616,7 @@ int git_smart_client_negotiate(
 		client_negotiate_done(client) < 0)
 		return -1;
 
-	if (pkt_read(&final_pkt, &client->io) < 0)
+	if (pkt_read(&final_pkt, &client->server) < 0)
 		return -1;
 
 	if (final_pkt->type != GIT_SMART_PACKET_ACK && final_pkt->type != GIT_SMART_PACKET_NAK) {
@@ -1586,10 +1634,15 @@ int git_smart_client_capabilities(
 	GIT_ASSERT_ARG(out && client);
 	GIT_ASSERT(client->received_advertisement);
 
-	*out = (client->server_capabilities & client->capabilities);
+	*out = client->capabilities;
 	return 0;
 }
 
+/*
+ * TODO: the fetch (but not clone) workflow should validate that the remote oid type
+ * is the same as the local oid type, we're not doing any sanity checking here right
+ * now
+ */
 int git_smart_client_oid_type(
 	git_oid_t *out,
 	git_smart_client *client)
@@ -1597,7 +1650,7 @@ int git_smart_client_oid_type(
 	GIT_ASSERT_ARG(out && client);
 	GIT_ASSERT(client->received_advertisement);
 
-	*out = client->oid_type;
+	*out = client->server.oid_type;
 	return 0;
 }
 
@@ -1627,7 +1680,7 @@ static int download_with_sideband(
 
 	while (!done) {
 		/* TODO: timeouts, better/faster cancellation handling */
-		if (pkt_read(&pkt, &client->io) < 0)
+		if (pkt_read(&pkt, &client->server) < 0)
 			return -1;
 
 		if (client->cancelled) {
@@ -1670,11 +1723,34 @@ static int download_no_sideband(
 	git_smart_client *client,
 	struct git_odb_writepack *packwriter)
 {
+	git_indexer_progress progress = { 0 };
+	ssize_t ret;
+
 	GIT_UNUSED(client);
 	GIT_UNUSED(packwriter);
 
-	/* TODO */
-	abort();
+	/* Flush the read buffer */
+	if (client->server.read_position < client->server.read_buf.size) {
+		const char *ptr = client->server.read_buf.ptr + client->server.read_position;
+		size_t len = client->server.read_buf.size - client->server.read_position;
+
+		if (packwriter->append(packwriter, ptr, len, &progress) < 0)
+			return -1;
+
+		git_str_clear(&client->server.read_buf);
+	}
+
+	if (git_str_grow(&client->server.read_buf, READ_SIZE) < 0)
+		return -1;
+
+	while ((ret = git_stream_read(client->stream, client->server.read_buf.ptr, READ_SIZE)) > 0) {
+		if (packwriter->append(packwriter, client->server.read_buf.ptr, ret, &progress) < 0)
+			return -1;
+
+		git_str_clear(&client->server.read_buf);
+	}
+
+	return packwriter->commit(packwriter, &progress);
 }
 
 int git_smart_client_download_pack(git_smart_client *client)
@@ -1735,18 +1811,13 @@ int git_smart_client_cancel(git_smart_client *client)
 
 void git_smart_client_free(git_smart_client *client)
 {
-	const char *src, *tgt;
 	git_remote_head *head;
 	size_t i;
 
 	if (!client)
 		return;
 
-	git_strmap_foreach(client->symrefs, src, tgt, {
-		git__free((char *)src);
-		git__free((char *)tgt);
-	});
-	git_strmap_free(client->symrefs);
+	smart_io_dispose(&client->server);
 
 	git_vector_foreach(&client->heads, i, head) {
 		git__free(head->name);
@@ -1755,7 +1826,7 @@ void git_smart_client_free(git_smart_client *client)
 	}
 	git_vector_free(&client->heads);
 
-	git_str_dispose(&client->io.write_buf);
-	git_str_dispose(&client->io.read_buf);
+	git_str_dispose(&client->server.write_buf);
+	git_str_dispose(&client->server.read_buf);
 	git__free(client);
 }
