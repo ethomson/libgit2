@@ -32,6 +32,8 @@
 #include "git2/revparse.h"
 #include "git2/sys/remote.h"
 
+extern char *git_http__user_agent;
+
 typedef struct {
 	git_transport parent;
 	git_remote *owner;
@@ -75,6 +77,7 @@ static int local_connect(
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 	git_process_options process_opts = GIT_PROCESS_OPTIONS_INIT;
+	git_smart_client_options smart_opts = GIT_SMART_CLIENT_OPTIONS_INIT;
 	git_str cmdline = GIT_STR_INIT;
 	git_net_url url = GIT_NET_URL_INIT;
 	const char *repo_path;
@@ -83,6 +86,14 @@ static int local_connect(
 	process_opts.capture_in = 1;
 	process_opts.capture_out = 1;
 	process_opts.capture_err = 0;
+
+	if (connect_opts) {
+		smart_opts.sideband_progress = connect_opts->callbacks.sideband_progress;
+		smart_opts.indexer_progress = connect_opts->callbacks.transfer_progress;
+		smart_opts.progress_payload = connect_opts->callbacks.payload;
+	}
+
+	smart_opts.agent = git_http__user_agent;
 
 	if (git__prefixcmp(base_url, "file://") == 0) {
 		if (git_net_url_parse(&url, base_url) < 0)
@@ -104,7 +115,8 @@ static int local_connect(
 	    git_stream_process_new(&transport->stream,
 			transport->process, 0) < 0 ||
 	    git_smart_client_init(&transport->client,
-			transport->owner->repo, transport->stream) < 0 ||
+			transport->owner->repo, transport->stream,
+			&smart_opts) < 0 ||
 	    git_process_start(transport->process) < 0)
 		goto done;
 
@@ -209,15 +221,18 @@ static int local_negotiate_fetch(
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
-	return git_smart_client_negotiate(transport->client, wants);
+	return git_smart_client_negotiate(transport->client, repo, wants);
 }
 
-static int local_download_pack(git_transport *_transport)
+static int local_download_pack(
+	git_transport *_transport,
+	git_repository *repo,
+	git_indexer_progress *progress)
 {
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
-	return git_smart_client_download_pack(transport->client);
+	return git_smart_client_download_pack(transport->client, repo, progress);
 }
 
 static int local_shallow_roots(git_oidarray *out, git_transport *_transport)
@@ -228,12 +243,12 @@ static int local_shallow_roots(git_oidarray *out, git_transport *_transport)
 	return git_smart_client_shallow_roots(out, transport->client);
 }
 
-static int local_cancel(git_transport *_transport)
+static void local_cancel(git_transport *_transport)
 {
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
-	return git_smart_client_cancel(transport->client);	
+	git_smart_client_cancel(transport->client);	
 }
 
 static int local_close(git_transport *_transport)

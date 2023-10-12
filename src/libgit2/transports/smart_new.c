@@ -25,22 +25,27 @@
 #include "git2/sys/remote.h"
 
 /* TODO : 1024 or something */
-#define READ_SIZE 1
+#define READ_SIZE 1024
 
 #define DEFAULT_CLIENT_CAPABILITIES \
 	(GIT_SMART_CAPABILITY_MULTI_ACK          | \
 	 GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
-	 GIT_SMART_CAPABILITY_NO_DONE            | \
 	 GIT_SMART_CAPABILITY_THIN_PACK          | \
 	 GIT_SMART_CAPABILITY_SIDE_BAND          | \
 	 GIT_SMART_CAPABILITY_SIDE_BAND_64K      | \
 	 GIT_SMART_CAPABILITY_OFS_DELTA          | \
-	 GIT_SMART_CAPABILITY_AGENT              | \
-	 GIT_SMART_CAPABILITY_OBJECT_FORMAT      | \
-	 GIT_SMART_CAPABILITY_SYMREF             | \
-	 GIT_SMART_CAPABILITY_NO_PROGRESS        | \
-	 GIT_SMART_CAPABILITY_INCLUDE_TAG        | \
-	 GIT_SMART_CAPABILITY_SESSION_ID)
+	 GIT_SMART_CAPABILITY_INCLUDE_TAG)
+
+/* Capabilities that must be agreed upon */
+/* Is this always our defaults? */
+#define NEGOTIATED_CAPABILITIES \
+	(GIT_SMART_CAPABILITY_MULTI_ACK          | \
+	 GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
+	 GIT_SMART_CAPABILITY_THIN_PACK          | \
+	 GIT_SMART_CAPABILITY_SIDE_BAND          | \
+	 GIT_SMART_CAPABILITY_SIDE_BAND_64K      | \
+	 GIT_SMART_CAPABILITY_OFS_DELTA          | \
+	 GIT_SMART_CAPABILITY_INCLUDE_TAG)
 
 #define DISALLOWED_SERVER_CAPABILITIES	0
 
@@ -148,8 +153,6 @@ struct smart_io {
 };
 
 struct git_smart_client {
-	git_repository *repo;
-
 	git_stream *stream;
 
 	struct smart_io server;
@@ -164,9 +167,14 @@ struct git_smart_client {
 	const char *session_id;
 	unsigned int capabilities;
 
-	/* Negotiation data */
-	git_array_oid_t shallow_roots;
+	/* Callbacks */
+	git_transport_message_cb sideband_progress;
+	git_indexer_progress_cb indexer_progress;
+	void *progress_payload;	
 
+	/* Negotiation data */
+
+	git_array_oid_t shallow_roots;
 	git_vector heads;
 };
 
@@ -287,7 +295,7 @@ GIT_INLINE(int) smart_io_reader_fill(struct smart_io *io, size_t len)
 		if ((ret = git_stream_read(io->stream, buf, READ_SIZE)) < 0)
 			return -1;
 
-		fprintf(debug, ">>>read>>> %.*s\n", (int)ret, buf);
+		fprintf(debug, ">>>read %d>>> %.*s\n", (int)ret, (int)ret, buf);
 
 		/* TODO: check overflow, ensure size <= asize */
 		io->read_buf.size += ret;
@@ -903,7 +911,6 @@ int pkt_read(struct git_smart_packet **out, struct smart_io *io)
 	fprintf(debug, "total_len is: %d -- io len is: %d\n", (int)io->read_len, (int)io->read_remain_len);
 	fflush(debug);
 
-	/* TODO: move this out of io? */
 	if (io->read_len == 0) {
 		io->read_pkt.type = GIT_SMART_PACKET_FLUSH;
 		io->read_pkt.data = io->read_buf.ptr;
@@ -1067,10 +1074,6 @@ static int fmt_capabilities(
 		}
 	}
 
-	printf("CAPABILITIES: %d\n", capabilities);
-	printf("agent: %s\n", agent);
-	printf("session_id: %s\n", session_id);
-
 	return git_str_oom(out) ? -1 : 0;
 }
 
@@ -1151,6 +1154,8 @@ int pkt_write(
 
 			if ((error = git_str_putc(&io->write_buf, '.')) == 0)
 				error = fmt_capabilities(&io->write_buf, capabilities, agent, session_id);
+
+				printf("buf: '%.*s'\n", io->write_buf.size, io->write_buf.ptr);
 		}
 
 		io->sent_capabilities = 1;
@@ -1190,7 +1195,8 @@ static int pkt_writer_flush(struct smart_io *io)
 int git_smart_client_init(
 	git_smart_client **out,
 	git_repository *repo,
-	git_stream *stream)
+	git_stream *stream,
+	git_smart_client_options *opts)
 {
 	git_smart_client *client;
 
@@ -1203,16 +1209,27 @@ int git_smart_client_init(
 	client = git__calloc(1, sizeof(git_smart_client));
 	GIT_ERROR_CHECK_ALLOC(client);
 
-	client->repo = repo;
 	client->stream = stream;
 	client->capabilities = DEFAULT_CLIENT_CAPABILITIES;
 
-client->capabilities &= ~GIT_SMART_CAPABILITY_SIDE_BAND;
-client->capabilities &= ~GIT_SMART_CAPABILITY_SIDE_BAND_64K;
+	if (opts) {
+		client->indexer_progress = opts->indexer_progress;
+		client->sideband_progress = opts->sideband_progress;
+		client->progress_payload = opts->progress_payload;
 
-	/* TODO */
-	client->agent = "libgit2/1.2.3.4.(hello.world)";
-	client->session_id = "opaque-session-id";
+		if (opts->agent) {
+			client->agent = git__strdup(opts->agent);
+			GIT_ERROR_CHECK_ALLOC(client->agent);
+		}
+
+		if (opts->session_id) {
+			client->session_id = git__strdup(opts->session_id);
+			GIT_ERROR_CHECK_ALLOC(client->session_id);
+		}
+	}
+
+	if (!client->sideband_progress)
+		client->capabilities |= GIT_SMART_CAPABILITY_QUIET;
 
 	if (smart_io_init(&client->server, repo, stream, SMART_IO_CLIENT) < 0)
 		return -1;
@@ -1283,23 +1300,7 @@ int git_smart_client_fetchpack(git_smart_client *client)
 	}
 
 	/* Set the common capabilities between the client and the server */
-git_str_clear(&caps);
-fmt_capabilities(&caps, DEFAULT_CLIENT_CAPABILITIES, NULL, NULL);
-printf("capabilities were: %d %s\n", client->capabilities, caps.ptr);
-
-git_str_clear(&caps);
-fmt_capabilities(&caps, client->capabilities, client->agent, client->session_id);
-printf("capabilities were: %d %s\n", client->capabilities, caps.ptr);
-
-git_str_clear(&caps);
-fmt_capabilities(&caps, client->server.capabilities, client->server.agent, client->server.session_id);
-printf("server capabilities: %d %s\n", client->server.capabilities, caps.ptr);
-
-
-	client->capabilities &= client->server.capabilities;
-git_str_clear(&caps);
-fmt_capabilities(&caps, client->capabilities, client->agent, client->session_id);
-printf("updated: %d %s\n", client->capabilities, caps.ptr);
+	client->capabilities &= ((client->server.capabilities & NEGOTIATED_CAPABILITIES) | ~NEGOTIATED_CAPABILITIES);
 
 	error = 0;
 
@@ -1477,7 +1478,9 @@ static int client_negotiate_depth(
 	return error ? -1 : 0;
 }
 
-static int client_negotiate_haves(git_smart_client *client)
+static int client_negotiate_haves(
+	git_smart_client *client,
+	git_repository *repo)
 {
 	git_revwalk *walk = NULL;
 	git_revwalk__push_options opts = GIT_REVWALK__PUSH_OPTIONS_INIT;
@@ -1487,7 +1490,7 @@ static int client_negotiate_haves(git_smart_client *client)
 
 	opts.insert_by_date = 1;
 
-	if (git_revwalk_new(&walk, client->repo) < 0 ||
+	if (git_revwalk_new(&walk, repo) < 0 ||
 	    git_revwalk__push_glob(walk, "refs/*", &opts) < 0)
 		goto done;
 
@@ -1604,6 +1607,7 @@ static int client_negotiate_done(git_smart_client *client)
 
 int git_smart_client_negotiate(
 	git_smart_client *client,
+	git_repository *repo,
 	const git_fetch_negotiation *wants)
 {
 	struct git_smart_packet *final_pkt;
@@ -1612,7 +1616,7 @@ int git_smart_client_negotiate(
 	    client_negotiate_wants(client, wants) < 0 ||
 		client_negotiate_depth(client, wants) < 0 ||
 		client_negotiate_flush(client) < 0 ||
-		client_negotiate_haves(client) < 0 ||
+		client_negotiate_haves(client, repo) < 0 ||
 		client_negotiate_done(client) < 0)
 		return -1;
 
@@ -1670,9 +1674,9 @@ int git_smart_client_refs(
 
 static int download_with_sideband(
 	git_smart_client *client,
-	struct git_odb_writepack *packwriter)
+	struct git_odb_writepack *packwriter,
+	git_indexer_progress *progress)
 {
-	git_indexer_progress progress = { 0 };
 	struct git_smart_packet *pkt;
 	size_t max_sideband = (client->capabilities & GIT_SMART_CAPABILITY_SIDE_BAND_64K) ? 65520 : 1000;
 	bool done = false;
@@ -1695,14 +1699,15 @@ static int download_with_sideband(
 
 		switch (pkt->type) {
 		case GIT_SMART_PACKET_SIDEBAND_PROGRESS:
-			/* TODO */
-			/* sideband_progress(pkt->sideband_data, (int)pkt->sideband_len, progress_payload) */
+			error = (client->sideband_progress) ?
+				client->sideband_progress(pkt->sideband, (int)pkt->sideband_len, client->progress_payload) :
+				0;
 			break;
 		case GIT_SMART_PACKET_SIDEBAND_DATA:
-			error = packwriter->append(packwriter, pkt->sideband, pkt->sideband_len, &progress);
+			error = packwriter->append(packwriter, pkt->sideband, pkt->sideband_len, progress);
 			break;
 		case GIT_SMART_PACKET_FLUSH:
-			error = packwriter->commit(packwriter, &progress);
+			error = packwriter->commit(packwriter, progress);
 			done = true;
 			break;
 		default:
@@ -1721,20 +1726,17 @@ static int download_with_sideband(
 
 static int download_no_sideband(
 	git_smart_client *client,
-	struct git_odb_writepack *packwriter)
+	struct git_odb_writepack *packwriter,
+	git_indexer_progress *progress)
 {
-	git_indexer_progress progress = { 0 };
 	ssize_t ret;
-
-	GIT_UNUSED(client);
-	GIT_UNUSED(packwriter);
 
 	/* Flush the read buffer */
 	if (client->server.read_position < client->server.read_buf.size) {
 		const char *ptr = client->server.read_buf.ptr + client->server.read_position;
 		size_t len = client->server.read_buf.size - client->server.read_position;
 
-		if (packwriter->append(packwriter, ptr, len, &progress) < 0)
+		if (packwriter->append(packwriter, ptr, len, progress) < 0)
 			return -1;
 
 		git_str_clear(&client->server.read_buf);
@@ -1744,34 +1746,33 @@ static int download_no_sideband(
 		return -1;
 
 	while ((ret = git_stream_read(client->stream, client->server.read_buf.ptr, READ_SIZE)) > 0) {
-		if (packwriter->append(packwriter, client->server.read_buf.ptr, ret, &progress) < 0)
+		if (packwriter->append(packwriter, client->server.read_buf.ptr, ret, progress) < 0)
 			return -1;
 
 		git_str_clear(&client->server.read_buf);
 	}
 
-	return packwriter->commit(packwriter, &progress);
+	return packwriter->commit(packwriter, progress);
 }
 
-int git_smart_client_download_pack(git_smart_client *client)
+int git_smart_client_download_pack(
+	git_smart_client *client,
+	git_repository *repo,
+	git_indexer_progress *progress)
 {
 	git_odb *odb;
 	struct git_odb_writepack *packwriter = NULL;
 
-	/* TODO */
-	void *progress_cb = NULL;
-	void *progress_payload = NULL;
-
 	int error = -1;
 
-	if (git_repository_odb__weakptr(&odb, client->repo) < 0 ||
-	    git_odb_write_pack(&packwriter, odb, progress_cb, progress_payload) < 0)
+	if (git_repository_odb__weakptr(&odb, repo) < 0 ||
+	    git_odb_write_pack(&packwriter, odb, client->indexer_progress, client->progress_payload) < 0)
 		goto done;
 
 	if ((client->capabilities & (GIT_SMART_CAPABILITY_SIDE_BAND | GIT_SMART_CAPABILITY_SIDE_BAND_64K)))
-		error = download_with_sideband(client, packwriter);
+		error = download_with_sideband(client, packwriter, progress);
 	else
-		error = download_no_sideband(client, packwriter);
+		error = download_no_sideband(client, packwriter, progress);
 
 	if (error)
 		goto done;

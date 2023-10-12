@@ -101,10 +101,22 @@ struct git_smart_packet {
 
 typedef struct git_smart_client git_smart_client;
 
+typedef struct {
+	const char *agent;
+	const char *session_id;
+
+	git_transport_message_cb sideband_progress;
+	git_indexer_progress_cb indexer_progress;
+	void *progress_payload;
+} git_smart_client_options;
+
+#define GIT_SMART_CLIENT_OPTIONS_INIT { NULL }
+
 int git_smart_client_init(
 	git_smart_client **out,
 	git_repository *repo,
-	git_stream *stream);
+	git_stream *stream,
+	git_smart_client_options *opts);
 int git_smart_client_fetchpack(git_smart_client *out);
 int git_smart_client_capabilities(
 	unsigned int *out,
@@ -118,8 +130,12 @@ int git_smart_client_refs(
 	git_smart_client *client);
 int git_smart_client_negotiate(
 	git_smart_client *client,
+	git_repository *repo,
 	const git_fetch_negotiation *wants);
-int git_smart_client_download_pack(git_smart_client *client);
+int git_smart_client_download_pack(
+	git_smart_client *client,
+	git_repository *repo,
+	git_indexer_progress *progress);
 int git_smart_client_shallow_roots(git_oidarray *out, git_smart_client *client);
 int git_smart_client_cancel(git_smart_client *client);
 void git_smart_client_free(git_smart_client *client);
