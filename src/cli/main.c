@@ -35,6 +35,7 @@ const cli_cmd_spec cli_cmds[] = {
 	{ "cat-file",    cmd_cat_file,    "Display an object in the repository" },
 	{ "clone",       cmd_clone,       "Clone a repository into a new directory" },
 	{ "config",      cmd_config,      "View or set configuration values " },
+	{ "fetch",       cmd_fetch,       "Fetch changes from a remote repository" },
 	{ "hash-object", cmd_hash_object, "Hash a raw object and product its object ID" },
 	{ "help",        cmd_help,        "Display help information" },
 	{ NULL }
