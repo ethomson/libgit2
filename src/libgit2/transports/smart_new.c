@@ -27,25 +27,25 @@
 /* TODO : 1024 or something */
 #define READ_SIZE 1024
 
-#define DEFAULT_CLIENT_CAPABILITIES \
-	(GIT_SMART_CAPABILITY_MULTI_ACK          | \
-	 GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
-	 GIT_SMART_CAPABILITY_THIN_PACK          | \
-	 GIT_SMART_CAPABILITY_SIDE_BAND          | \
-	 GIT_SMART_CAPABILITY_SIDE_BAND_64K      | \
-	 GIT_SMART_CAPABILITY_OFS_DELTA          | \
-	 GIT_SMART_CAPABILITY_INCLUDE_TAG)
+#define DEFAULT_CLIENT_CAPABILITIES ( \
+	GIT_SMART_CAPABILITY_MULTI_ACK          | \
+	GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
+	GIT_SMART_CAPABILITY_THIN_PACK          | \
+	GIT_SMART_CAPABILITY_SIDE_BAND          | \
+	GIT_SMART_CAPABILITY_SIDE_BAND_64K      | \
+	GIT_SMART_CAPABILITY_OFS_DELTA          | \
+	GIT_SMART_CAPABILITY_INCLUDE_TAG        )
 
 /* Capabilities that must be agreed upon */
-/* Is this always our defaults? */
-#define NEGOTIATED_CAPABILITIES \
-	(GIT_SMART_CAPABILITY_MULTI_ACK          | \
-	 GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
-	 GIT_SMART_CAPABILITY_THIN_PACK          | \
-	 GIT_SMART_CAPABILITY_SIDE_BAND          | \
-	 GIT_SMART_CAPABILITY_SIDE_BAND_64K      | \
-	 GIT_SMART_CAPABILITY_OFS_DELTA          | \
-	 GIT_SMART_CAPABILITY_INCLUDE_TAG)
+/* TODO: Is this always our defaults? */
+#define NEGOTIATED_CAPABILITIES ( \
+	GIT_SMART_CAPABILITY_MULTI_ACK          | \
+	GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
+	GIT_SMART_CAPABILITY_THIN_PACK          | \
+	GIT_SMART_CAPABILITY_SIDE_BAND          | \
+	GIT_SMART_CAPABILITY_SIDE_BAND_64K      | \
+	GIT_SMART_CAPABILITY_OFS_DELTA          | \
+	GIT_SMART_CAPABILITY_INCLUDE_TAG        )
 
 #define DISALLOWED_SERVER_CAPABILITIES	0
 
@@ -113,7 +113,7 @@ struct smart_io {
 
 	smart_io_t type;
 
-	unsigned int sent_capabilities: 1,
+	unsigned int sent_capabilities : 1,
 	             received_capabilities : 1,
 	             received_flush : 1;
 
@@ -400,7 +400,7 @@ static int pkt_parse_type(struct smart_io *io)
 		return smart_io_reader_consume(io, CONST_STRLEN("done\n"));
 	}
 
-	else if (git__strncmp(io->read_remain_data, "ACK ", io->read_remain_len) == 0) {
+	else if (git__prefixncmp(io->read_remain_data, io->read_remain_len, "ACK ") == 0) {
 		io->read_pkt.type = GIT_SMART_PACKET_ACK;
 		return smart_io_reader_consume(io, CONST_STRLEN("ACK "));
 	}
@@ -623,10 +623,11 @@ static int pkt_parse_capabilities(struct smart_io *io)
 			io->read_pkt.capabilities = capabilities;
 			io->read_pkt.capabilities_len = capabilities_len;
 
-printf("capabilities: %d\n", io->capabilities);
-printf("server session id: %s\n", io->session_id);
-printf("server agent: %s\n", io->agent);
-printf("oid type: %d\n", io->oid_type);
+fprintf(debug, "capabilities: %.*s\n", (int)capabilities_len, capabilities);
+fprintf(debug, "capabilities: %d\n", io->capabilities);
+fprintf(debug, "server session id: %s\n", io->session_id);
+fprintf(debug, "server agent: %s\n", io->agent);
+fprintf(debug, "oid type: %d\n", io->oid_type);
 
 
 			return smart_io_reader_consume(io, capabilities_len);
@@ -1049,7 +1050,7 @@ static int fmt_capabilities(
 	const char *session_id)
 {
 	const char *name;
-	size_t i = 0;
+	size_t i, cnt = 0;
 
 	for (i = 0; (name = smart_capabilities[i].name) != NULL; i++) {
 		const char *value = NULL;
@@ -1063,7 +1064,7 @@ static int fmt_capabilities(
 		if (smart_capabilities[i].capability == GIT_SMART_CAPABILITY_SESSION_ID && !(value = session_id))
 			continue;
 
-		if (i)
+		if (cnt++)
 			git_str_putc(out, ' ');
 
 		git_str_puts(out, name);
@@ -1121,6 +1122,17 @@ int pkt_write(
 				error = git_str_put(&io->write_buf, id_str, hexsize);
 		}
 		break;
+	case GIT_SMART_PACKET_HAVE:
+		{
+			const git_oid *id = va_arg(ap, const git_oid *);
+			char id_str[GIT_OID_MAX_HEXSIZE];
+			size_t hexsize = git_oid_hexsize(git_oid_type(id));
+
+			if ((error = git_oid_fmt(id_str, id)) == 0 &&
+			    (error = git_str_put(&io->write_buf, "have ", 5)) == 0)
+				error = git_str_put(&io->write_buf, id_str, hexsize);
+		}
+		break;
 	case GIT_SMART_PACKET_DONE:
 		error = git_str_put(&io->write_buf, "done", 4);
 		break;
@@ -1152,7 +1164,7 @@ int pkt_write(
 			const char *agent = va_arg(ap, const char *);
 			const char *session_id = va_arg(ap, const char *);
 
-			if ((error = git_str_putc(&io->write_buf, '.')) == 0)
+			if ((error = git_str_putc(&io->write_buf, ' ')) == 0)
 				error = fmt_capabilities(&io->write_buf, capabilities, agent, session_id);
 
 				printf("buf: '%.*s'\n", io->write_buf.size, io->write_buf.ptr);
@@ -1185,6 +1197,9 @@ int pkt_write(
 
 static int pkt_writer_flush(struct smart_io *io)
 {
+fprintf(debug, "-------------pkt_writer_flush-------------\n");
+fprintf(debug, "%.*s\n", (int)io->write_buf.size, io->write_buf.ptr);
+
 	if (git_stream__write_full(io->stream, io->write_buf.ptr, io->write_buf.size, 0) < 0)
 		return -1;
 
@@ -1335,81 +1350,11 @@ static int client_setup_depth(
 	return 0;
 }
 
-#if 0
-
-int git_smart_client_negotiate(
-	git_smart_client *client,
-	const git_fetch_negotiation *wants)
-{
-	git_revwalk__push_options opts = GIT_REVWALK__PUSH_OPTIONS_INIT;
-	git_str data = GIT_STR_INIT;
-	git_revwalk *walk = NULL;
-	struct dzk,git_smart_packet *pkt;
-	int error = -1;
-	unsigned int i;
-	git_oid oid;
-
-	opts.insert_by_date = 1;
-
-
-
-
-	/* Tell the other end that we're done negotiating */
-	if (t->rpc && t->common.length > 0) {
-		git_smart_packet *pkt;
-		unsigned int j;
-
-		if ((error = git_pkt_buffer_wants(wants, &t->caps, &data)) < 0)
-			goto on_error;
-
-		git_vector_foreach(&t->common, j, pkt) {
-			if ((error = git_pkt_buffer_have(&pkt->oid, &data)) < 0)
-				goto on_error;
-		}
-
-		if (git_str_oom(&data)) {
-			error = -1;
-			goto on_error;
-		}
-	}
-
-	if ((error = git_pkt_buffer_done(&data)) < 0)
-		goto on_error;
-
-	if (t->cancelled.val) {
-		git_error_set(GIT_ERROR_NET, "the fetch was cancelled");
-		error = GIT_EUSER;
-		goto on_error;
-	}
-
-	if ((error = git_smart__negotiation_step(&t->parent, data.ptr, data.size)) < 0)
-		goto on_error;
-
-	git_str_dispose(&data);
-	git_revwalk_free(walk);
-
-	/* Now let's eat up whatever the server gives us */
-	if (!t->caps.multi_ack && !t->caps.multi_ack_detailed) {
-		if (pkt_read(&pkt, client->reader) < 0)
-			return -1;
-
-		if (pkt->type != GIT_SMART_PACKET_ACK && pkt->type != GIT_SMART_PACKET_NAK) {
-			git_error_set(GIT_ERROR_NET, "unexpected packet type in negotiation");
-			return -1;
-		}
-	} else {
-		error = wait_while_ack(t);
-	}
-
-	return error;
-
-on_error:
-	git_revwalk_free(walk);
-	git_str_dispose(&data);
-	return error;
-}
-#endif
-
+/*
+ * TODO: does filter wants actually look to see if we have an object or not
+ or does it only look at our HEADs? force pushing back in time would have us
+ fetching a whole history unnecessarily
+ */
 static int client_negotiate_wants(
 	git_smart_client *client,
 	const git_fetch_negotiation *wants)
@@ -1490,7 +1435,19 @@ static int client_negotiate_haves(
 
 	opts.insert_by_date = 1;
 
+/*
+ * TODO: is there a better revwalk mode here? we should ideally
+ * output all our tips _first_ and never walk any of them until we
+ * know that they are not ACKed in common. If they're common then
+ * there's no point in walking them.
+ * 
+ * also _we know_ whether there are things in common or not. we should
+ * just send haves for things that we know are the remote tips, and hide
+ * them from the revwalk?
+ */
+
 	if (git_revwalk_new(&walk, repo) < 0 ||
+	    git_revwalk_sorting(walk, GIT_SORT_TOPOLOGICAL) < 0 ||
 	    git_revwalk__push_glob(walk, "refs/*", &opts) < 0)
 		goto done;
 
@@ -1506,12 +1463,12 @@ static int client_negotiate_haves(
 		else if (error < 0)
 			return -1;
 
-		if (pkt_write(&client->server, GIT_SMART_PACKET_HAVE,
-				GIT_SMART_PACKET_HAVE,
-				&oid) < 0)
+		if (pkt_write(&client->server, GIT_SMART_PACKET_HAVE, &oid) < 0)
 			return -1;
 
-		if (++i % 20 == 0) {
+printf("HAVE :: %s\n", git_oid_tostr_s(&oid));
+
+		if (++i % 32 == 0) {
 			struct git_smart_packet *response_pkt;
 			bool reading_acks = true, done = false;
 
@@ -1534,13 +1491,15 @@ static int client_negotiate_haves(
 						if ((response_pkt->flags & GIT_SMART_PACKET_ACK_COMMON)) {
 							/* common? we can stop walking down this line -- so git_revwalk_hide this oid */
 							if (git_revwalk_hide(walk, &response_pkt->oid) < 0)
-								return 1;
+								return -1;
 						} else if ((response_pkt->flags & GIT_SMART_PACKET_ACK_READY)) {
 							done = true;
 						} else if (response_pkt->flags) {
 							git_error_set(GIT_ERROR_NET, "unexpected ack data during negotiation");
 							return -1;
 						}
+					} else if (response_pkt->type == GIT_SMART_PACKET_NAK) {
+						break;
 					} else {
 						git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
 						return -1;
@@ -1549,7 +1508,11 @@ static int client_negotiate_haves(
 
 				else if ((client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK)) {
 					if (response_pkt->type == GIT_SMART_PACKET_ACK) {
+						printf("ACK %s %d\n", git_oid_tostr_s(&response_pkt->oid), response_pkt->flags);
+
 						if ((response_pkt->flags & GIT_SMART_PACKET_ACK_CONTINUE)) {
+							printf("common!\n");
+
 							/* common? we can stop walking down this line -- so git_revwalk_hide this oid */
 							if (git_revwalk_hide(walk, &response_pkt->oid) < 0)
 								return 1;
@@ -1561,6 +1524,9 @@ static int client_negotiate_haves(
 						}
 					} else if (response_pkt->type == GIT_SMART_PACKET_NAK) {
 						break;
+					} else {
+						git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
+						return -1;
 					}
 				}
 
@@ -1598,9 +1564,53 @@ static int client_negotiate_flush(git_smart_client *client)
 
 static int client_negotiate_done(git_smart_client *client)
 {
+	struct git_smart_packet *response_pkt;
+
 	if (pkt_write(&client->server, GIT_SMART_PACKET_DONE) < 0 ||
 	    pkt_writer_flush(&client->server) < 0)
 		return -1;
+
+	if (client->capabilities & (GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED |
+	                            GIT_SMART_CAPABILITY_MULTI_ACK)) {
+		/*
+		 * multi_ack mode is simple: we read a single ACK or NAK packet in
+		 * response to our "done" packet.
+		 */
+		if (pkt_read(&response_pkt, &client->server) < 0)
+			return -1;
+
+printf("FINAL PACKET IS: %d\n", response_pkt->type);
+
+		if (response_pkt->type != GIT_SMART_PACKET_ACK &&
+		    response_pkt->type != GIT_SMART_PACKET_NAK) {
+			git_error_set(GIT_ERROR_NET, "unexpected packet type during final negotiation");
+			return -1;
+		}
+	} else {
+		size_t position;
+
+		/*
+		 * We don't know how many ACKs the server sent to our haves in
+		 * non-multi_ack mode. Drain the read buffer until we have a
+		 * non-ACK or NAK packet.
+		 */
+		do {
+			position = smart_io_reader_position(&client->server);
+
+			if (pkt_read(&response_pkt, &client->server) < 0)
+				return -1;
+		} while (response_pkt->type == GIT_SMART_PACKET_ACK ||
+		         response_pkt->type == GIT_SMART_PACKET_NAK);
+
+		if (response_pkt->type != GIT_SMART_PACKET_SIDEBAND_DATA &&
+		    response_pkt->type != GIT_SMART_PACKET_SIDEBAND_PROGRESS &&
+		    response_pkt->type != GIT_SMART_PACKET_SIDEBAND_ERROR) {
+			git_error_set(GIT_ERROR_NET, "unexpected packet type waiting for packfile data");
+			return -1;
+		}
+
+		smart_io_reader_set_position(&client->server, position);
+	}
 
 	return 0;
 }
@@ -1619,14 +1629,6 @@ int git_smart_client_negotiate(
 		client_negotiate_haves(client, repo) < 0 ||
 		client_negotiate_done(client) < 0)
 		return -1;
-
-	if (pkt_read(&final_pkt, &client->server) < 0)
-		return -1;
-
-	if (final_pkt->type != GIT_SMART_PACKET_ACK && final_pkt->type != GIT_SMART_PACKET_NAK) {
-		git_error_set(GIT_ERROR_NET, "unexpected packet type during final negotiation");
-		return -1;
-	}
 
 	return 0;
 }

@@ -66,7 +66,7 @@ typedef enum {
 } git_smart_capability;
 
 enum git_smart_packet_flags {
-	GIT_SMART_PACKET_ACK_CONTINUE,
+	GIT_SMART_PACKET_ACK_CONTINUE = 1,
 	GIT_SMART_PACKET_ACK_COMMON,
 	GIT_SMART_PACKET_ACK_READY
 };
