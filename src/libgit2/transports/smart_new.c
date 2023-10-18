@@ -157,7 +157,8 @@ struct git_smart_client {
 
 	struct smart_io server;
 
-	unsigned int received_advertisement : 1,
+	unsigned int connected : 1,
+	             received_advertisement : 1,
 	             cancelled : 1;
 
 	/* Configurable client information */
@@ -1249,6 +1250,8 @@ int git_smart_client_init(
 	if (smart_io_init(&client->server, repo, stream, SMART_IO_CLIENT) < 0)
 		return -1;
 
+	client->connected = 1;
+
 	*out = client;
 	return 0;
 }
@@ -1289,6 +1292,7 @@ int git_smart_client_fetchpack(git_smart_client *client)
 	git_str caps = GIT_STR_INIT;
 	int error = -1;
 
+	GIT_ASSERT(client->connected);
 	GIT_ASSERT(!client->received_advertisement);
 
 	fprintf(debug, "fetchpack start\n");
@@ -1622,6 +1626,8 @@ int git_smart_client_negotiate(
 {
 	struct git_smart_packet *final_pkt;
 
+	GIT_ASSERT(client->connected);
+
 	if (client_setup_depth(client, wants) < 0 ||
 	    client_negotiate_wants(client, wants) < 0 ||
 		client_negotiate_depth(client, wants) < 0 ||
@@ -1765,6 +1771,10 @@ int git_smart_client_download_pack(
 	git_odb *odb;
 	struct git_odb_writepack *packwriter = NULL;
 
+	GIT_ASSERT_ARG(client && repo);
+	GIT_ASSERT(client->connected);
+	GIT_ASSERT(client->received_advertisement);
+
 	int error = -1;
 
 	if (git_repository_odb__weakptr(&odb, repo) < 0 ||
@@ -1792,6 +1802,9 @@ int git_smart_client_shallow_roots(git_oidarray *out, git_smart_client *client)
 {
 	size_t len;
 
+	GIT_ASSERT_ARG(out && client);
+	GIT_ASSERT(client->received_advertisement);
+
 	GIT_ERROR_CHECK_ALLOC_MULTIPLY(&len, client->shallow_roots.size, sizeof(git_oid));
 
 	out->count = client->shallow_roots.size;
@@ -1808,8 +1821,32 @@ int git_smart_client_shallow_roots(git_oidarray *out, git_smart_client *client)
 
 int git_smart_client_cancel(git_smart_client *client)
 {
+	GIT_ASSERT_ARG(client);
+
 	client->cancelled = 1;
 	return 0;
+}
+
+int git_smart_client_close(git_smart_client *client)
+{
+	int error = 0;
+
+	GIT_ASSERT_ARG(client);
+
+	/*
+	 * If we're still connected at this point and not using RPC,
+	 * we should say goodbye by sending a flush, or git-daemon
+	 * will complain that we disconnected unexpectedly.
+	 */
+	if (client->connected) {
+		if (pkt_write(&client->server, GIT_SMART_PACKET_FLUSH) < 0 ||
+		    pkt_writer_flush(&client->server) < 0)
+			error = -1;
+
+		client->connected = 0;
+	}
+
+	return error;
 }
 
 void git_smart_client_free(git_smart_client *client)

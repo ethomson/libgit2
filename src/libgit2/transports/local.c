@@ -259,6 +259,7 @@ static int local_close(git_transport *_transport)
 	if (!transport->connected)
 		return 0;
 
+	git_smart_client_close(transport->client);
 	git_stream_close(transport->stream);
 	git_process_close(transport->process);
 	git_stream_free(transport->stream);

@@ -138,6 +138,7 @@ int git_smart_client_download_pack(
 	git_indexer_progress *progress);
 int git_smart_client_shallow_roots(git_oidarray *out, git_smart_client *client);
 int git_smart_client_cancel(git_smart_client *client);
+int git_smart_client_close(git_smart_client *client);
 void git_smart_client_free(git_smart_client *client);
 
 #endif
