@@ -1439,16 +1439,11 @@ static int client_negotiate_haves(
 
 	opts.insert_by_date = 1;
 
-/*
- * TODO: is there a better revwalk mode here? we should ideally
- * output all our tips _first_ and never walk any of them until we
- * know that they are not ACKed in common. If they're common then
- * there's no point in walking them.
- * 
- * also _we know_ whether there are things in common or not. we should
- * just send haves for things that we know are the remote tips, and hide
- * them from the revwalk?
- */
+	/*
+	 * TODO: can we skip negotiation of the remote's tips that we have?
+	 * If they're fully deep, then we need not add them to the revwalk
+	 * at all, we can just "have" them and be done with it.
+	 */
 
 	if (git_revwalk_new(&walk, repo) < 0 ||
 	    git_revwalk_sorting(walk, GIT_SORT_TOPOLOGICAL) < 0 ||
