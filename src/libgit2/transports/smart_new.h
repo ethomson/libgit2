@@ -102,6 +102,8 @@ struct git_smart_packet {
 typedef struct git_smart_client git_smart_client;
 
 typedef struct {
+	unsigned int rpc : 1;
+
 	const char *agent;
 	const char *session_id;
 
@@ -110,7 +112,7 @@ typedef struct {
 	void *progress_payload;
 } git_smart_client_options;
 
-#define GIT_SMART_CLIENT_OPTIONS_INIT { NULL }
+#define GIT_SMART_CLIENT_OPTIONS_INIT { 0 }
 
 int git_smart_client_init(
 	git_smart_client **out,

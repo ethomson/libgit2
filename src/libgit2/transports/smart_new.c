@@ -155,10 +155,13 @@ struct smart_io {
 struct git_smart_client {
 	git_stream *stream;
 
+	git_revwalk *walk;
 	struct smart_io server;
 
-	unsigned int connected : 1,
+	unsigned int rpc : 1,
+	             connected : 1,
 	             received_advertisement : 1,
+	             negotiation_complete : 1,
 	             cancelled : 1;
 
 	/* Configurable client information */
@@ -253,9 +256,9 @@ GIT_INLINE(int) smart_io_reader_reset(struct smart_io *io)
 	GIT_ASSERT(io->read_buf.size >= io->read_pkt.len);
 
 	/*
-	* TODO: we probably don't need to do a memmove on every read.
-	* Just occasionally to prevent us from having an unnecessarily large buffer.
-	*/
+	 * TODO: we probably don't need to do a memmove on every read.
+	 * Just occasionally to prevent us from having an unnecessarily large buffer.
+	 */
 	memmove(io->read_buf.ptr,
 	        io->read_buf.ptr + io->read_pkt.len,
 	        io->read_buf.size - io->read_pkt.len);
@@ -1229,6 +1232,7 @@ int git_smart_client_init(
 	client->capabilities = DEFAULT_CLIENT_CAPABILITIES;
 
 	if (opts) {
+		client->rpc = opts->rpc;
 		client->indexer_progress = opts->indexer_progress;
 		client->sideband_progress = opts->sideband_progress;
 		client->progress_payload = opts->progress_payload;
@@ -1431,13 +1435,9 @@ static int client_negotiate_haves(
 	git_smart_client *client,
 	git_repository *repo)
 {
-	git_revwalk *walk = NULL;
-	git_revwalk__push_options opts = GIT_REVWALK__PUSH_OPTIONS_INIT;
 	git_oid oid;
 	size_t i;
 	int error = -1;
-
-	opts.insert_by_date = 1;
 
 	/*
 	 * TODO: can we skip negotiation of the remote's tips that we have?
@@ -1445,19 +1445,19 @@ static int client_negotiate_haves(
 	 * at all, we can just "have" them and be done with it.
 	 */
 
-	if (git_revwalk_new(&walk, repo) < 0 ||
-	    git_revwalk_sorting(walk, GIT_SORT_TOPOLOGICAL) < 0 ||
-	    git_revwalk__push_glob(walk, "refs/*", &opts) < 0)
-		goto done;
+	if (!client->walk) {
+		git_revwalk__push_options opts = GIT_REVWALK__PUSH_OPTIONS_INIT;
 
-	/*
-	 * Our support for ACK extensions is simply to parse them. On
-	 * the first ACK we will accept that as enough common
-	 * objects. We give up if we haven't found an answer in the
-	 * first 256 we send.
-	 */
-	for (i = 0; i < 256; ) {
-		if ((error = git_revwalk_next(&oid, walk)) == GIT_ITEROVER)
+		opts.insert_by_date = 1;
+
+		if (git_revwalk_new(&client->walk, repo) < 0 ||
+			git_revwalk_sorting(client->walk, GIT_SORT_TOPOLOGICAL) < 0 ||
+			git_revwalk__push_glob(client->walk, "refs/*", &opts) < 0)
+			return -1;
+	}
+
+	for (i = 0; i < 256 && !client->negotiation_complete; ) {
+		if ((error = git_revwalk_next(&oid, client->walk)) == GIT_ITEROVER)
 			break;
 		else if (error < 0)
 			return -1;
@@ -1469,17 +1469,16 @@ printf("HAVE :: %s\n", git_oid_tostr_s(&oid));
 
 		if (++i % 32 == 0) {
 			struct git_smart_packet *response_pkt;
-			bool reading_acks = true, done = false;
+			bool reading_acks = true;
 
 			if (client->cancelled) {
 				git_error_set(GIT_ERROR_NET, "fetch was cancelled by the user");
-				error = GIT_EUSER;
-				goto done;
+				return GIT_EUSER;
 			}
 
 			if (pkt_write(&client->server, GIT_SMART_PACKET_FLUSH) < 0 ||
 			    pkt_writer_flush(&client->server) < 0)
-				return -1;
+					return -1;
 
 			while (reading_acks) {
 				if (pkt_read(&response_pkt, &client->server) < 0)
@@ -1489,10 +1488,10 @@ printf("HAVE :: %s\n", git_oid_tostr_s(&oid));
 					if (response_pkt->type == GIT_SMART_PACKET_ACK) {
 						if ((response_pkt->flags & GIT_SMART_PACKET_ACK_COMMON)) {
 							/* common? we can stop walking down this line -- so git_revwalk_hide this oid */
-							if (git_revwalk_hide(walk, &response_pkt->oid) < 0)
+							if (git_revwalk_hide(client->walk, &response_pkt->oid) < 0)
 								return -1;
 						} else if ((response_pkt->flags & GIT_SMART_PACKET_ACK_READY)) {
-							done = true;
+							client->negotiation_complete = true;
 						} else if (response_pkt->flags) {
 							git_error_set(GIT_ERROR_NET, "unexpected ack data during negotiation");
 							return -1;
@@ -1513,13 +1512,13 @@ printf("HAVE :: %s\n", git_oid_tostr_s(&oid));
 							printf("common!\n");
 
 							/* common? we can stop walking down this line -- so git_revwalk_hide this oid */
-							if (git_revwalk_hide(walk, &response_pkt->oid) < 0)
-								return 1;
+							if (git_revwalk_hide(client->walk, &response_pkt->oid) < 0)
+								return -1;
 						} else if (response_pkt->flags) {
 							git_error_set(GIT_ERROR_NET, "unexpected ack data during negotiation");
 							return -1;
 						} else {
-							done = true;
+							client->negotiation_complete = true;
 						}
 					} else if (response_pkt->type == GIT_SMART_PACKET_NAK) {
 						break;
@@ -1531,7 +1530,7 @@ printf("HAVE :: %s\n", git_oid_tostr_s(&oid));
 
 				else {
 					if (response_pkt->type == GIT_SMART_PACKET_ACK) {
-						done = true;
+						client->negotiation_complete = true;
 						break;
 					} else if (response_pkt->type != GIT_SMART_PACKET_NAK) {
 						git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
@@ -1540,16 +1539,16 @@ printf("HAVE :: %s\n", git_oid_tostr_s(&oid));
 				}
 			}
 
-			if (done)
+			if (client->negotiation_complete)
 				break;
+
+			if (client->rpc)
+				return GIT_RETRY;
 		}
 	}
 
-	error = 0;
-
-done:
-	git_revwalk_free(walk);
-	return error;
+	client->negotiation_complete = true;
+	return 0;
 }
 
 static int client_negotiate_flush(git_smart_client *client)
@@ -1614,22 +1613,29 @@ printf("FINAL PACKET IS: %d\n", response_pkt->type);
 	return 0;
 }
 
+/*
+ * This function is re-entrant for stateless RPC. Stateless (eg HTTP)
+ * callers will invoke this function until it returns `0` or an error.
+ * GIT_RETRY is used to indicate that the caller should reconnect and
+ * invoke this function again.
+ */
 int git_smart_client_negotiate(
 	git_smart_client *client,
 	git_repository *repo,
 	const git_fetch_negotiation *wants)
 {
 	struct git_smart_packet *final_pkt;
+	int error;
 
-	GIT_ASSERT(client->connected);
+	GIT_ASSERT(client->connected && !client->negotiation_complete);
 
-	if (client_setup_depth(client, wants) < 0 ||
-	    client_negotiate_wants(client, wants) < 0 ||
-		client_negotiate_depth(client, wants) < 0 ||
-		client_negotiate_flush(client) < 0 ||
-		client_negotiate_haves(client, repo) < 0 ||
-		client_negotiate_done(client) < 0)
-		return -1;
+	if ((error = client_setup_depth(client, wants)) < 0 ||
+	    (error = client_negotiate_wants(client, wants)) < 0 ||
+		(error = client_negotiate_depth(client, wants)) < 0 ||
+		(error = client_negotiate_flush(client)) < 0 ||
+		(error = client_negotiate_haves(client, repo)) < 0 ||
+		(error = client_negotiate_done(client)) < 0)
+		return error;
 
 	return 0;
 }
@@ -1851,6 +1857,8 @@ void git_smart_client_free(git_smart_client *client)
 
 	if (!client)
 		return;
+
+	git_revwalk_free(client->walk);
 
 	smart_io_dispose(&client->server);
 
