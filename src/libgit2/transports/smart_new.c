@@ -178,6 +178,7 @@ struct git_smart_client {
 
 	/* Negotiation data */
 
+	git_array_oid_t common_tips;
 	git_array_oid_t shallow_roots;
 	git_vector heads;
 };
@@ -1248,6 +1249,10 @@ int git_smart_client_init(
 		}
 	}
 
+	/* TODO: make a better estimate */
+	git_array_init_to_size(client->common_tips, 32);
+	GIT_ERROR_CHECK_ALLOC(client->common_tips.ptr);
+
 	if (!client->sideband_progress)
 		client->capabilities |= GIT_SMART_CAPABILITY_QUIET;
 
@@ -1431,12 +1436,92 @@ static int client_negotiate_depth(
 	return error ? -1 : 0;
 }
 
+static int read_acks(git_smart_client *client)
+{
+	struct git_smart_packet *response_pkt;
+	bool reading_acks = true;
+
+	while (reading_acks) {
+		if (pkt_read(&response_pkt, &client->server) < 0)
+			return -1;
+
+		if ((client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED)) {
+			if (response_pkt->type == GIT_SMART_PACKET_ACK) {
+				if ((response_pkt->flags & GIT_SMART_PACKET_ACK_COMMON)) {
+					/*
+					 * If this is a common commit we can stop walking this line.
+					 */
+					if (git_revwalk_hide(client->walk, &response_pkt->oid) < 0)
+						return -1;
+
+					if (client->rpc &&
+					    git_oidarray__add(&client->common_tips, &response_pkt->oid) < 0)
+						return -1;
+				} else if ((response_pkt->flags & GIT_SMART_PACKET_ACK_READY)) {
+					client->negotiation_complete = true;
+				} else if (response_pkt->flags) {
+					git_error_set(GIT_ERROR_NET, "unexpected ack data during negotiation");
+					return -1;
+				}
+			} else if (response_pkt->type == GIT_SMART_PACKET_NAK) {
+				break;
+			} else {
+				git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
+				return -1;
+			}
+		}
+
+		else if ((client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK)) {
+			if (response_pkt->type == GIT_SMART_PACKET_ACK) {
+				printf("ACK %s %d\n", git_oid_tostr_s(&response_pkt->oid), response_pkt->flags);
+
+				if ((response_pkt->flags & GIT_SMART_PACKET_ACK_CONTINUE)) {
+					printf("common!\n");
+
+					/*
+					 * If this is a common commit we can stop walking this line.
+					 */
+					if (git_revwalk_hide(client->walk, &response_pkt->oid) < 0)
+						return -1;
+
+					if (client->rpc &&
+					    git_oidarray__add(&client->common_tips, &response_pkt->oid) < 0)
+						return -1;
+				} else if (response_pkt->flags) {
+					git_error_set(GIT_ERROR_NET, "unexpected ack data during negotiation");
+					return -1;
+				} else {
+					client->negotiation_complete = true;
+				}
+			} else if (response_pkt->type == GIT_SMART_PACKET_NAK) {
+				break;
+			} else {
+				git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
+				return -1;
+			}
+		}
+
+		else {
+			if (response_pkt->type == GIT_SMART_PACKET_ACK) {
+				client->negotiation_complete = true;
+				break;
+			} else if (response_pkt->type != GIT_SMART_PACKET_NAK) {
+				git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
+				return -1;
+			}
+		}
+	}
+
+	return 0;
+}
+
 static int client_negotiate_haves(
 	git_smart_client *client,
 	git_repository *repo)
 {
 	git_oid oid;
 	size_t i;
+	bool initial_negotiation = false;
 	int error = -1;
 
 	/*
@@ -1454,6 +1539,17 @@ static int client_negotiate_haves(
 			git_revwalk_sorting(client->walk, GIT_SORT_TOPOLOGICAL) < 0 ||
 			git_revwalk__push_glob(client->walk, "refs/*", &opts) < 0)
 			return -1;
+
+		initial_negotiation = true;
+	}
+
+	/*
+	 * If we've made multiple requests with want negotiation, then
+	 * append any previously negotiated common tips to this request.
+	 */
+	for (i = 0; i < client->common_tips.size; i++) {
+		if (pkt_write(&client->server, GIT_SMART_PACKET_HAVE, &client->common_tips.ptr[i]) < 0)
+			return -1;
 	}
 
 	for (i = 0; i < 256 && !client->negotiation_complete; ) {
@@ -1468,76 +1564,15 @@ static int client_negotiate_haves(
 printf("HAVE :: %s\n", git_oid_tostr_s(&oid));
 
 		if (++i % 32 == 0) {
-			struct git_smart_packet *response_pkt;
-			bool reading_acks = true;
-
 			if (client->cancelled) {
 				git_error_set(GIT_ERROR_NET, "fetch was cancelled by the user");
 				return GIT_EUSER;
 			}
 
 			if (pkt_write(&client->server, GIT_SMART_PACKET_FLUSH) < 0 ||
-			    pkt_writer_flush(&client->server) < 0)
+			    pkt_writer_flush(&client->server) < 0 ||
+				read_acks(client) < 0)
 					return -1;
-
-			while (reading_acks) {
-				if (pkt_read(&response_pkt, &client->server) < 0)
-					return -1;
-
-				if ((client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED)) {
-					if (response_pkt->type == GIT_SMART_PACKET_ACK) {
-						if ((response_pkt->flags & GIT_SMART_PACKET_ACK_COMMON)) {
-							/* common? we can stop walking down this line -- so git_revwalk_hide this oid */
-							if (git_revwalk_hide(client->walk, &response_pkt->oid) < 0)
-								return -1;
-						} else if ((response_pkt->flags & GIT_SMART_PACKET_ACK_READY)) {
-							client->negotiation_complete = true;
-						} else if (response_pkt->flags) {
-							git_error_set(GIT_ERROR_NET, "unexpected ack data during negotiation");
-							return -1;
-						}
-					} else if (response_pkt->type == GIT_SMART_PACKET_NAK) {
-						break;
-					} else {
-						git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
-						return -1;
-					}
-				}
-
-				else if ((client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK)) {
-					if (response_pkt->type == GIT_SMART_PACKET_ACK) {
-						printf("ACK %s %d\n", git_oid_tostr_s(&response_pkt->oid), response_pkt->flags);
-
-						if ((response_pkt->flags & GIT_SMART_PACKET_ACK_CONTINUE)) {
-							printf("common!\n");
-
-							/* common? we can stop walking down this line -- so git_revwalk_hide this oid */
-							if (git_revwalk_hide(client->walk, &response_pkt->oid) < 0)
-								return -1;
-						} else if (response_pkt->flags) {
-							git_error_set(GIT_ERROR_NET, "unexpected ack data during negotiation");
-							return -1;
-						} else {
-							client->negotiation_complete = true;
-						}
-					} else if (response_pkt->type == GIT_SMART_PACKET_NAK) {
-						break;
-					} else {
-						git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
-						return -1;
-					}
-				}
-
-				else {
-					if (response_pkt->type == GIT_SMART_PACKET_ACK) {
-						client->negotiation_complete = true;
-						break;
-					} else if (response_pkt->type != GIT_SMART_PACKET_NAK) {
-						git_error_set(GIT_ERROR_NET, "unexpected packet type during negotiation");
-						return -1;
-					}
-				}
-			}
 
 			if (client->negotiation_complete)
 				break;
