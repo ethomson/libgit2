@@ -14,6 +14,7 @@
 #include "pack-objects.h"
 #include "revwalk.h"
 #include "oidarray.h"
+#include "push.h"
 #include "repository.h"
 
 #include "git2/odb.h"
@@ -27,7 +28,7 @@
 /* TODO : 1024 or something */
 #define READ_SIZE 1024
 
-#define DEFAULT_CLIENT_CAPABILITIES ( \
+#define DEFAULT_CLIENT_FETCH_CAPABILITIES   ( \
 	GIT_SMART_CAPABILITY_MULTI_ACK          | \
 	GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
 	GIT_SMART_CAPABILITY_THIN_PACK          | \
@@ -36,9 +37,15 @@
 	GIT_SMART_CAPABILITY_OFS_DELTA          | \
 	GIT_SMART_CAPABILITY_INCLUDE_TAG        )
 
+#define DEFAULT_CLIENT_PUSH_CAPABILITIES    ( \
+	GIT_SMART_CAPABILITY_REPORT_STATUS_V2   | \
+	GIT_SMART_CAPABILITY_REPORT_STATUS      | \
+	GIT_SMART_CAPABILITY_SIDE_BAND          | \
+	GIT_SMART_CAPABILITY_SIDE_BAND_64K      )
+
 /* Capabilities that must be agreed upon */
 /* TODO: Is this always our defaults? */
-#define NEGOTIATED_CAPABILITIES ( \
+#define NEGOTIATED_CAPABILITIES             ( \
 	GIT_SMART_CAPABILITY_MULTI_ACK          | \
 	GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
 	GIT_SMART_CAPABILITY_THIN_PACK          | \
@@ -48,6 +55,8 @@
 	GIT_SMART_CAPABILITY_INCLUDE_TAG        )
 
 #define DISALLOWED_SERVER_CAPABILITIES	0
+
+#define MIN_PROGRESS_UPDATE_INTERVAL 0.5
 
 typedef struct {
 	git_smart_capability capability;
@@ -111,9 +120,9 @@ typedef enum {
 struct smart_io {
 	git_stream *stream;
 
-	smart_io_t type;
-
-	unsigned int sent_capabilities : 1,
+	unsigned int type : 1,
+	             direction : 1,
+	             sent_capabilities : 1,
 	             received_capabilities : 1,
 	             received_flush : 1;
 
@@ -132,6 +141,9 @@ struct smart_io {
 	 */
 	git_str write_buf;
 	git_str read_buf;
+
+	/* The buffer for push-results packets encoded in the sideband. */
+	git_str sideband_buf;
 
 	/*
 	 * Packet reading: data for the current packet being read.
@@ -158,10 +170,12 @@ struct git_smart_client {
 	git_revwalk *walk;
 	struct smart_io server;
 
-	unsigned int rpc : 1,
+	unsigned int direction : 1,
+	             rpc : 1,
 	             connected : 1,
 	             received_advertisement : 1,
 	             negotiation_complete : 1,
+	             received_report : 1,
 	             cancelled : 1;
 
 	/* Configurable client information */
@@ -174,6 +188,7 @@ struct git_smart_client {
 	/* Callbacks */
 	git_transport_message_cb sideband_progress;
 	git_indexer_progress_cb indexer_progress;
+	git_push_transfer_progress push_transfer_progress;
 	void *progress_payload;	
 
 	/* Negotiation data */
@@ -221,12 +236,15 @@ GIT_INLINE(int) smart_io_init(
 	struct smart_io *io,
 	git_repository *repo,
 	git_stream *stream,
-	smart_io_t type)
+	smart_io_t type,
+	unsigned int direction)
 {
 	GIT_UNUSED(repo);
+	GIT_ASSERT(type <= 1 && direction <= 1);
 
 	io->stream = stream;
 	io->type = type;
+	io->direction = direction;
 
 	if (type == SMART_IO_CLIENT && git_strmap_new(&io->symrefs) < 0)
 		return -1;
@@ -342,6 +360,25 @@ GIT_INLINE(int) smart_io_reader_consume(struct smart_io *io, size_t len)
 	return 0;
 }
 
+static int parse_len(const char *buf, size_t len)
+{
+	int value;
+
+	if (!isxdigit(buf[0]) || !isxdigit(buf[1]) ||
+	    !isxdigit(buf[2]) || !isxdigit(buf[3])) {
+		git_error_set(GIT_ERROR_NET, "invalid packet - incorrectly encoded length: '%c%c%c%c'", buf[0], buf[1], buf[2], buf[3]);
+		return -1;
+	}
+
+	if (git__strntol64(&value, buf, 4, NULL, 16) < 0 ||
+	    value < 0 || value > USHORT_MAX - 4) {
+		git_error_set(GIT_ERROR_NET, "invalid packet - invalid decoded length");
+		return -1;
+	}
+
+	return value;
+}
+
 static int pkt_parse_len(struct smart_io *io)
 {
 	int64_t value;
@@ -353,19 +390,8 @@ static int pkt_parse_len(struct smart_io *io)
 		return -1;
 	}
 
-	if (!isxdigit(io->read_remain_data[0]) ||
-	    !isxdigit(io->read_remain_data[1]) ||
-	    !isxdigit(io->read_remain_data[2]) ||
-	    !isxdigit(io->read_remain_data[3])) {
-		git_error_set(GIT_ERROR_NET, "invalid packet - incorrectly encoded length: '%c%c%c%c'", io->read_remain_data[0], io->read_remain_data[1], io->read_remain_data[2], io->read_remain_data[3]);
+	if ((value = parse_len(io->read_remain_data)) < 0)
 		return -1;
-	}
-
-	if (git__strntol64(&value, io->read_remain_data, 4, NULL, 16) < 0 ||
-	    value < 0 || value > UINT_MAX - 4) {
-		git_error_set(GIT_ERROR_NET, "invalid packet - invalid decoded length");
-		return -1;
-	}
 
 	io->read_len = value;
 	io->read_remain_len = value;
@@ -1138,6 +1164,23 @@ int pkt_write(
 				error = git_str_put(&io->write_buf, id_str, hexsize);
 		}
 		break;
+	case GIT_SMART_PACKET_UPDATE:
+		{
+			const git_oid *old_id = va_arg(ap, const git_oid *);
+			const git_oid *new_id = va_arg(ap, const git_oid *);
+			const char *ref_name = va_arg(ap, const char *);
+			char id_str[GIT_OID_MAX_HEXSIZE];
+			size_t hexsize = git_oid_hexsize(git_oid_type(old_id));
+
+			if ((error = git_oid_fmt(id_str, old_id)) == 0 &&
+			    (error = git_str_put(&io->write_buf, id_str, hexsize)) == 0 &&
+				(error = git_str_putc(&io->write_buf, ' ')) == 0 &&
+			    (error = git_oid_fmt(id_str, new_id)) == 0 &&
+			    (error = git_str_put(&io->write_buf, id_str, hexsize)) == 0 &&
+				(error = git_str_putc(&io->write_buf, ' ')) == 0)
+				error = git_str_puts(&io->write_buf, ref_name);
+		}
+		break;
 	case GIT_SMART_PACKET_DONE:
 		error = git_str_put(&io->write_buf, "done", 4);
 		break;
@@ -1163,16 +1206,20 @@ int pkt_write(
 		break;
 	}
 
+/* TODO: if we're sending a packfile, we should send object format */
 	if (!error && !io->sent_capabilities) {
 		if (has_capabilities) {
 			int capabilities = va_arg(ap, int);
 			const char *agent = va_arg(ap, const char *);
 			const char *session_id = va_arg(ap, const char *);
 
+			if (io->direction == GIT_DIRECTION_PUSH)
+				git_str_putc(&io->write_buf, '\0');
+
 			if ((error = git_str_putc(&io->write_buf, ' ')) == 0)
 				error = fmt_capabilities(&io->write_buf, capabilities, agent, session_id);
 
-				printf("buf: '%.*s'\n", io->write_buf.size, io->write_buf.ptr);
+			printf("buf: '%.*s'\n", (int)io->write_buf.size, io->write_buf.ptr);
 		}
 
 		io->sent_capabilities = 1;
@@ -1200,10 +1247,19 @@ int pkt_write(
 	return error;
 }
 
+static void debug_printbuf(const char *buf, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		fprintf(debug, "%c", buf[i] == 0 ? '!' : buf[i]);
+	}
+}
+
 static int pkt_writer_flush(struct smart_io *io)
 {
 fprintf(debug, "-------------pkt_writer_flush-------------\n");
-fprintf(debug, "%.*s\n", (int)io->write_buf.size, io->write_buf.ptr);
+debug_printbuf(io->write_buf.ptr, io->write_buf.size);
 
 	if (git_stream__write_full(io->stream, io->write_buf.ptr, io->write_buf.size, 0) < 0)
 		return -1;
@@ -1230,10 +1286,13 @@ int git_smart_client_init(
 	GIT_ERROR_CHECK_ALLOC(client);
 
 	client->stream = stream;
-	client->capabilities = DEFAULT_CLIENT_CAPABILITIES;
+	client->capabilities = (opts && opts->direction == GIT_DIRECTION_FETCH) ?
+		DEFAULT_CLIENT_FETCH_CAPABILITIES :
+		DEFAULT_CLIENT_PUSH_CAPABILITIES;
 
 	if (opts) {
 		client->rpc = opts->rpc;
+		client->direction = opts->direction;
 		client->indexer_progress = opts->indexer_progress;
 		client->sideband_progress = opts->sideband_progress;
 		client->progress_payload = opts->progress_payload;
@@ -1256,7 +1315,7 @@ int git_smart_client_init(
 	if (!client->sideband_progress)
 		client->capabilities |= GIT_SMART_CAPABILITY_QUIET;
 
-	if (smart_io_init(&client->server, repo, stream, SMART_IO_CLIENT) < 0)
+	if (smart_io_init(&client->server, repo, stream, SMART_IO_CLIENT, client->direction) < 0)
 		return -1;
 
 	client->connected = 1;
@@ -1295,7 +1354,25 @@ static int handle_ref(
 	return git_vector_insert(&client->heads, head);
 }
 
-int git_smart_client_fetchpack(git_smart_client *client)
+static int client_set_capabilities(git_smart_client *client)
+{
+	client->capabilities &= ((client->server.capabilities & NEGOTIATED_CAPABILITIES) | ~NEGOTIATED_CAPABILITIES);
+#if 0
+	/* Simplify the capability set to our best offering */
+	if ((client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK) &&
+	    (client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED)) {
+		client->capabilities &= ~GIT_SMART_CAPABILITY_MULTI_ACK;
+	}
+
+	/* Simplify the capability set to our best offering */
+	if ((client->capabilities & GIT_SMART_CAPABILITY_REPORT_STATUS) &&
+	    (client->capabilities & GIT_SMART_CAPABILITY_REPORT_STATUS_V2)) {
+		client->capabilities &= ~GIT_SMART_CAPABILITY_REPORT_STATUS;
+	}
+#endif
+}
+
+int git_smart_client_connect(git_smart_client *client)
 {
 	struct git_smart_packet *packet;
 	git_str caps = GIT_STR_INIT;
@@ -1328,7 +1405,7 @@ int git_smart_client_fetchpack(git_smart_client *client)
 	}
 
 	/* Set the common capabilities between the client and the server */
-	client->capabilities &= ((client->server.capabilities & NEGOTIATED_CAPABILITIES) | ~NEGOTIATED_CAPABILITIES);
+	client_set_capabilities(client);
 
 	error = 0;
 
@@ -1521,7 +1598,6 @@ static int client_negotiate_haves(
 {
 	git_oid oid;
 	size_t i;
-	bool initial_negotiation = false;
 	int error = -1;
 
 	/*
@@ -1539,8 +1615,6 @@ static int client_negotiate_haves(
 			git_revwalk_sorting(client->walk, GIT_SORT_TOPOLOGICAL) < 0 ||
 			git_revwalk__push_glob(client->walk, "refs/*", &opts) < 0)
 			return -1;
-
-		initial_negotiation = true;
 	}
 
 	/*
@@ -1659,7 +1733,6 @@ int git_smart_client_negotiate(
 	git_repository *repo,
 	const git_fetch_negotiation *wants)
 {
-	struct git_smart_packet *final_pkt;
 	int error;
 
 	GIT_ASSERT(client->connected && !client->negotiation_complete);
@@ -1750,6 +1823,9 @@ static int download_with_sideband(
 		case GIT_SMART_PACKET_SIDEBAND_DATA:
 			error = packwriter->append(packwriter, pkt->sideband, pkt->sideband_len, progress);
 			break;
+		case GIT_SMART_PACKET_SIDEBAND_ERROR:
+			git_error_set(GIT_ERROR_NET, "server error during download pack: %.*s", (int)pkt->sideband_len, pkt->sideband);
+			return -1;
 		case GIT_SMART_PACKET_FLUSH:
 			error = packwriter->commit(packwriter, progress);
 			done = true;
@@ -1806,12 +1882,11 @@ int git_smart_client_download_pack(
 {
 	git_odb *odb;
 	struct git_odb_writepack *packwriter = NULL;
+	int error = -1;
 
 	GIT_ASSERT_ARG(client && repo);
 	GIT_ASSERT(client->connected);
 	GIT_ASSERT(client->received_advertisement);
-
-	int error = -1;
 
 	if (git_repository_odb__weakptr(&odb, repo) < 0 ||
 	    git_odb_write_pack(&packwriter, odb, client->indexer_progress, client->progress_payload) < 0)
@@ -1853,6 +1928,372 @@ int git_smart_client_shallow_roots(git_oidarray *out, git_smart_client *client)
 	}
 
 	return 0;
+}
+
+static int client_write_updates(git_smart_client *client, git_push *push)
+{
+	push_spec *spec;
+	size_t i;
+
+	git_vector_foreach(&push->specs, i, spec) {
+		if (pkt_write(&client->server,
+		              GIT_SMART_PACKET_UPDATE | GIT_SMART_PACKET_HAS_CAPABILITIES,
+					  &spec->roid,
+					  &spec->loid,
+					  spec->refspec.dst,
+					  client->capabilities) < 0)
+			return -1;
+	}
+
+	if (pkt_write(&client->server, GIT_SMART_PACKET_FLUSH) < 0 ||
+		pkt_writer_flush(&client->server) < 0)
+		return -1;
+
+	return 0;
+}
+
+struct write_packfile_payload
+{
+	git_smart_client *client;
+	git_packbuilder *packbuilder;
+	size_t bytes_written;
+	uint64_t last_update_time;
+};
+
+static int write_packfile(void *buf, size_t size, void *data)
+{
+	struct write_packfile_payload *payload = data;
+	git_smart_client *client = payload->client;
+	int error = 0;
+
+	if (git_stream__write_full(client->server.stream, buf, size, 0) < 0)
+		return -1;
+
+	if (client->push_transfer_progress) {
+		uint64_t current_time = git_time_monotonic();
+		uint64_t elapsed = current_time - payload->last_update_time;
+
+		payload->bytes_written += size;
+
+		if (elapsed >= MIN_PROGRESS_UPDATE_INTERVAL) {
+			payload->last_update_time = current_time;
+
+			error = client->push_transfer_progress(
+				payload->packbuilder->nr_written,
+				payload->packbuilder->nr_objects,
+				payload->bytes_written,
+				client->progress_payload);
+		}
+	}
+
+	return error;
+}
+
+static int handle_report(
+	git_smart_client *client,
+	git_push *push,
+	struct git_smart_packet *pkt)
+{
+	push_status *status;
+
+	GIT_UNUSED(client);
+
+	if (pkt->type == GIT_SMART_PACKET_FLUSH) {
+		client->received_report = true;
+		return 0;
+	}
+
+	if (pkt->type == GIT_SMART_PACKET_UNPACK) {
+		push->unpack_ok = (git__strncmp("ok", pkt->message, pkt->message_len) == 0);
+		return 0;
+	}
+
+	status = git__calloc(1, sizeof(push_status));
+	GIT_ERROR_CHECK_ALLOC(status);
+
+	status->ref = git__strndup(pkt->refname, pkt->refname_len);
+	GIT_ERROR_CHECK_ALLOC(status->ref);
+
+	if (pkt->type == GIT_SMART_PACKET_NG) {
+		status->msg = git__strndup(pkt->message, pkt->message_len);
+		GIT_ERROR_CHECK_ALLOC(status->ref);
+	}
+
+	if (git_vector_insert(&push->status, status) < 0)
+		return -1;
+
+	return 0;
+}
+
+static int handle_report_sideband(
+	git_smart_client *client,
+	git_push *push,
+	struct git_smart_packet *pkt)
+{
+	int len;
+
+	/*
+	 * When sending the results, it writes the push report packets
+	 * (ok/ng/unpack ok) within a sideband packet. So we need to buffer the
+	 * sideband output and reparse it as packets. :/
+	 */
+	if (git_str_put(client->server.sideband_buf, pkt->sideband, pkt->sideband_len) < 0)
+		return -1;
+
+	/* Need at least four bytes for a packet */
+	while (client->server.sideband_buf.size >= 4) {
+		size_t consumed = 0;
+
+		if ((len = parse_len(client->server.sideband_buf, client->server.sideband_buf.size)) < 0)
+			return -1;
+
+		if ((client->server.sideband_buf.size - 4) < len)
+			break;
+
+		git_str_consume_bytes(&client->server.sideband_buf, 4);
+
+		if (len == 0) {
+			pkt = flush;
+		} else {
+			pkt.type ...
+
+		}
+
+		if (handle_report(client, push, pkt) < 0)
+			return -1;
+
+		git_str_consume_bytes(&client->server.sideband_buf, (size_t)len);
+	}
+
+	return 0;
+}
+
+static int client_parse_report(git_smart_client *client, git_push *push)
+{
+	struct git_smart_packet *pkt;
+
+	while (!client->received_report) {
+		if (pkt_read(&pkt, &client->server) < 0)
+			return -1;
+
+		switch (pkt->type) {
+		case GIT_SMART_PACKET_SIDEBAND_DATA:
+			/* This is a sideband packet which contains other packets */
+			if (handle_report_sideband(client, push, pkt) < 0)
+				return -1;
+
+			break;
+
+		case GIT_SMART_PACKET_SIDEBAND_PROGRESS:
+			if (client->sideband_progress) {
+				if (client->sideband_progress(pkt->sideband, pkt->sideband_len, client->progress_payload) < 0)
+					return -1;
+			}
+
+			break;
+
+		case GIT_SMART_PACKET_SIDEBAND_ERROR:
+			git_error_set(GIT_ERROR_NET,
+				"server error during download pack: %.*s",
+				(int)pkt->sideband_len, pkt->sideband);
+			return -1;
+
+		case GIT_SMART_PACKET_OK:
+		case GIT_SMART_PACKET_NG:
+		case GIT_SMART_PACKET_UNPACK:
+		case GIT_SMART_PACKET_FLUSH:
+			if (handle_report(client, push, pkt) < 0)
+				return -1;
+
+			break;
+
+		default:
+			git_error_set(GIT_ERROR_NET, "unexpected packet during pack download");
+			return -1;
+		}
+	}
+
+	if (client->server.sideband_buf.size > 0) {
+		git_error_set(GIT_ERROR_NET, "unexpected sideband push results");
+		return -1;
+	}
+
+	return 0;
+}
+
+static int handle_updates(git_smart_client *client, git_push *push)
+{
+	/* 
+	 * For each push spec we sent to the server, we should have
+	 * gotten back a status packet in the push report.
+	 */
+	if (push->specs.length != push->status.length) {
+		git_error_set(GIT_ERROR_NET, "expected status report for each update");
+		return -1;
+	}
+
+#if 0
+	git_pkt_ref *ref;
+	push_spec *push_spec;
+	push_status *push_status;
+	size_t i, j, heads_len;
+	int cmp;
+
+
+	/*
+	 * We require that push_specs be sorted with push_spec_rref_cmp,
+	 * and that push_report be sorted with push_status_ref_cmp
+	 */
+	git_vector_sort(&push->specs);
+	git_vector_sort(&push->status);
+
+	git_vector_foreach(&push->specs, i, push_spec) {
+		push_status = git_vector_get(&push->status, i);
+
+		/*
+		 * For each push spec we sent to the server, we should have
+		 * gotten back a status packet in the push report which matches
+		 */
+		if (strcmp(push_spec->refspec.dst, push_status->ref)) {
+			git_error_set(GIT_ERROR_NET, "expected matching status report for each update");
+			return -1;
+		}
+	}
+
+/* TODO */
+	/* We require that refs be sorted with ref_name_cmp */
+	git_vector_sort(&client->heads);
+	i = j = 0;
+	heads_len = client->heads.length;
+
+	/* Merge join push_specs with refs */
+	while (i < push_specs->length && j < refs_len) {
+		push_spec = git_vector_get(push_specs, i);
+		push_status = git_vector_get(push_report, i);
+		ref = git_vector_get(refs, j);
+
+		cmp = strcmp(push_spec->refspec.dst, ref->head.name);
+
+		/* Iterate appropriately */
+		if (cmp <= 0) i++;
+		if (cmp >= 0) j++;
+
+		/* Add case */
+		if (cmp < 0 &&
+			!push_status->msg &&
+			add_ref_from_push_spec(refs, push_spec) < 0)
+			return -1;
+
+		/* Update case, delete case */
+		if (cmp == 0 &&
+			!push_status->msg)
+			git_oid_cpy(&ref->head.oid, &push_spec->loid);
+	}
+
+	for (; i < push_specs->length; i++) {
+		push_spec = git_vector_get(push_specs, i);
+		push_status = git_vector_get(push_report, i);
+
+		/* Add case */
+		if (!push_status->msg &&
+			add_ref_from_push_spec(refs, push_spec) < 0)
+			return -1;
+	}
+
+	/* Remove any refs which we updated to have a zero OID. */
+	git_vector_rforeach(refs, i, ref) {
+		if (git_oid_is_zero(&ref->head.oid)) {
+			git_vector_remove(refs, i);
+			git_pkt_free((git_pkt *)ref);
+		}
+	}
+
+	git_vector_sort(refs);
+
+	return 0;
+#endif
+}
+
+int git_smart_client_push(git_smart_client *client, git_push *push)
+{
+	struct write_packfile_payload payload = { client, push->pb };
+	push_spec *spec;
+	size_t i;
+	bool need_pack = false;
+	int error = -1;
+
+	GIT_ASSERT_ARG(client && push);
+
+#ifdef PUSH_DEBUG
+{
+	git_remote_head *head;
+	char hex[GIT_OID_SHA1_HEXSIZE+1]; hex[GIT_OID_SHA1_HEXSIZE] = '\0';
+
+	git_vector_foreach(&push->remote->refs, i, head) {
+		git_oid_fmt(hex, &head->oid);
+		fprintf(debug, "PUSH : %s (%s)\n", hex, head->name);
+	}
+
+	git_vector_foreach(&push->specs, i, spec) {
+		git_oid_fmt(hex, &spec->roid);
+		fprintf(debug, "PUSH : %s (%s) -> ", hex, spec->lref);
+		git_oid_fmt(hex, &spec->loid);
+		fprintf(debug, "PUSH : %s (%s)\n", hex, spec->rref ?
+			spec->rref : spec->lref);
+	}
+}
+#endif
+
+	/*
+	 * Figure out if we need to send a packfile; which is in all
+	 * cases except when we only send delete commands
+	 */
+	git_vector_foreach(&push->specs, i, spec) {
+		if (spec->refspec.src && spec->refspec.src[0] != '\0') {
+			need_pack = true;
+			break;
+		}
+	}
+
+	/* TODO */
+	/* Prepare pack before sending pack header to avoid timeouts. */
+	if (need_pack && git_packbuilder__prepare(push->pb) < 0)
+		goto done;
+
+	if (client_write_updates(client, push) < 0)
+		goto done;
+
+	if (need_pack &&
+		git_packbuilder_foreach(push->pb, &write_packfile, &payload) < 0)
+		goto done;
+
+	/*
+	 * If we sent nothing or the server doesn't support report-status, then
+	 * we consider the pack to have been unpacked successfully.
+	 */
+	if (push->specs.length == 0 ||
+	    (client->capabilities & (GIT_SMART_CAPABILITY_REPORT_STATUS | GIT_SMART_CAPABILITY_REPORT_STATUS_V2)) == 0)
+		push->unpack_ok = 1;
+	else if (client_parse_report(client, push) < 0)
+		goto done;
+
+	/* If progress is being reported write the final report */
+	if (client->push_transfer_progress) {
+		if (client->push_transfer_progress(
+					push->pb->nr_written,
+					push->pb->nr_objects,
+					payload.bytes_written,
+					client->progress_payload) < 0)
+			goto done;
+	}
+
+	if (push->status.length && handle_updates(client, push) < 0)
+		goto done;
+
+	error = 0;
+
+done:
+	return error;
 }
 
 int git_smart_client_cancel(git_smart_client *client)
@@ -1904,6 +2345,7 @@ void git_smart_client_free(git_smart_client *client)
 	}
 	git_vector_free(&client->heads);
 
+	git_str_dispose(&client->server.sideband_buf);
 	git_str_dispose(&client->server.write_buf);
 	git_str_dispose(&client->server.read_buf);
 	git__free(client);

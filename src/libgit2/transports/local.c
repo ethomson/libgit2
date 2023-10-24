@@ -93,6 +93,7 @@ static int local_connect(
 		smart_opts.progress_payload = connect_opts->callbacks.payload;
 	}
 
+	smart_opts.direction = (direction & 0x01);
 	smart_opts.agent = git_http__user_agent;
 
 	if (git__prefixcmp(base_url, "file://") == 0) {
@@ -120,19 +121,8 @@ static int local_connect(
 	    git_process_start(transport->process) < 0)
 		goto done;
 
-	if (direction == GIT_DIRECTION_FETCH) {
-		if (git_smart_client_fetchpack(transport->client) < 0)
-			goto done;
-	} else if (direction == GIT_DIRECTION_PUSH) {
-		/* TODO
-		if (git_smart_client_sendpack() < 0)
-			goto done;
-		*/
-		abort();
-
-	} else {
-		GIT_ASSERT(!"invalid direction");
-	}
+	if (git_smart_client_connect(transport->client) < 0)
+		goto done;
 
 	transport->connected = 1;
 
@@ -243,6 +233,14 @@ static int local_shallow_roots(git_oidarray *out, git_transport *_transport)
 	return git_smart_client_shallow_roots(out, transport->client);
 }
 
+static int local_push(git_transport *_transport, git_push *push)
+{
+	transport_local *transport =
+		GIT_CONTAINER_OF(_transport, transport_local, parent);
+
+	return git_smart_client_push(transport->client, push);
+}
+
 static void local_cancel(git_transport *_transport)
 {
 	transport_local *transport =
@@ -306,6 +304,7 @@ int git_transport_local(
 	transport->parent.negotiate_fetch = local_negotiate_fetch;
 	transport->parent.download_pack = local_download_pack;
 	transport->parent.shallow_roots = local_shallow_roots;
+	transport->parent.push = local_push;
 	transport->parent.cancel = local_cancel;
 	transport->parent.close = local_close;
 	transport->parent.free = local_free;

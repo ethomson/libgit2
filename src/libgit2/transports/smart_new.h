@@ -26,6 +26,10 @@ typedef enum {
 	GIT_SMART_PACKET_DEEPEN,
 	GIT_SMART_PACKET_WANT,
 	GIT_SMART_PACKET_HAVE,
+	GIT_SMART_PACKET_UPDATE,
+	GIT_SMART_PACKET_OK,
+	GIT_SMART_PACKET_NG,
+	GIT_SMART_PACKET_UNPACK,
 	GIT_SMART_PACKET_DONE,
 	GIT_SMART_PACKET_SIDEBAND_DATA,
 	GIT_SMART_PACKET_SIDEBAND_PROGRESS,
@@ -86,11 +90,15 @@ struct git_smart_packet {
 
 	enum git_smart_packet_flags flags;
 
-	/* For reference advertisements, the reference itself. */
+	/* For reference advertisements or push reports, the reference data. */
 	const char *refname;
 	size_t refname_len;
 
-	/* TODO: unify with refname */
+	/* The push report data, or sideband message. */
+	const char *message;
+	size_t message_len;
+
+	/* TODO: unify with message */
 	const char *sideband;
 	size_t sideband_len;
 
@@ -102,13 +110,15 @@ struct git_smart_packet {
 typedef struct git_smart_client git_smart_client;
 
 typedef struct {
-	unsigned int rpc : 1;
+	unsigned int direction : 1,
+	             rpc : 1;
 
 	const char *agent;
 	const char *session_id;
 
 	git_transport_message_cb sideband_progress;
 	git_indexer_progress_cb indexer_progress;
+	git_push_transfer_progress_cb push_transfer_progress;
 	void *progress_payload;
 } git_smart_client_options;
 
@@ -119,7 +129,7 @@ int git_smart_client_init(
 	git_repository *repo,
 	git_stream *stream,
 	git_smart_client_options *opts);
-int git_smart_client_fetchpack(git_smart_client *out);
+int git_smart_client_connect(git_smart_client *out);
 int git_smart_client_capabilities(
 	unsigned int *out,
 	git_smart_client *client);
@@ -139,6 +149,7 @@ int git_smart_client_download_pack(
 	git_repository *repo,
 	git_indexer_progress *progress);
 int git_smart_client_shallow_roots(git_oidarray *out, git_smart_client *client);
+int git_smart_client_push(git_smart_client *client, git_push *push);
 int git_smart_client_cancel(git_smart_client *client);
 int git_smart_client_close(git_smart_client *client);
 void git_smart_client_free(git_smart_client *client);
