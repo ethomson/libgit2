@@ -1219,10 +1219,14 @@ int git_smart__push(git_transport *transport, git_push *push)
 
 	if (push->status.length) {
 		error = update_refs_from_report(&t->refs, &push->specs, &push->status);
+
 		if (error < 0)
 			goto done;
 
-		error = git_smart__update_heads(t, NULL);
+		memcpy(&t->refs, 0, sizeof(git_vector));
+		memcpy(&t->heads, 0, sizeof(git_vector));
+
+		//error = git_smart__update_heads(t, NULL);
 	}
 
 done:
