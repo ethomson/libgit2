@@ -13,6 +13,7 @@
 #include "net.h"
 #include "remote.h"
 #include "smart.h"
+#include "smart_new.h"
 #include "auth.h"
 #include "http.h"
 #include "auth_negotiate.h"
@@ -45,6 +46,8 @@ struct http_server {
 typedef struct {
 	git_transport parent;
 	git_remote *owner;
+
+	git_smart_client smart_client;
 
 	git_remote_connect_options connect_opts;
 
@@ -404,6 +407,9 @@ static int http_connect(
 		goto done;
 	}
 
+	if (git_smart_client_connect(&transport->smart_client) < 0)
+		goto done;
+
 	transport->connected = 1;
 	error = 0;
 
@@ -462,17 +468,19 @@ int git_transport_http(git_transport **out, git_remote *owner, void *param)
 	transport->parent.version = GIT_TRANSPORT_VERSION;
 	transport->parent.connect = http_connect;
 	transport->parent.set_connect_opts = http_set_connect_opts;
+	transport->parent.is_connected = http_is_connected;
+	/*
 	transport->parent.capabilities = http_capabilities;
 #ifdef GIT_EXPERIMENTAL_SHA256
 	transport->parent.oid_type = http__oid_type;
 #endif
-	transport->parent.is_connected = http_is_connected;
 	transport->parent.negotiate_fetch = http_negotiate_fetch;
 	transport->parent.shallow_roots = http_shallow_roots;
 	transport->parent.download_pack = http_download_pack;
 	transport->parent.push = http_push;
 	transport->parent.ls = http_ls;
 	transport->parent.cancel = http_cancel;
+	*/
 	transport->parent.close = http_close;
 	transport->parent.free = http_free;
 
