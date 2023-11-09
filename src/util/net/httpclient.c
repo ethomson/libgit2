@@ -5,13 +5,12 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
-#include "common.h"
+#include "git2_util.h"
 #include "git2.h"
 #include "http_parser.h"
 #include "vector.h"
 #include "trace.h"
 #include "httpclient.h"
-#include "http.h"
 #include "auth.h"
 #include "auth_negotiate.h"
 #include "auth_ntlm.h"
