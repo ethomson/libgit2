@@ -4,10 +4,23 @@
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
-#ifndef INCLUDE_transports_smart_new_h__
-#define INCLUDE_transports_smart_new_h__
+#ifndef INCLUDE_smart_h__
+#define INCLUDE_smart_h__
 
 #include "common.h"
+#include "vector.h"
+#include "oidarray.h"
+
+typedef enum {
+	GIT_SMART_PACKET_NONE,
+	GIT_SMART_PACKET_FLUSH,
+	GIT_SMART_PACKET_ACK,
+	GIT_SMART_PACKET_NAK,
+	GIT_SMART_PACKET_ERR,
+	GIT_SMART_PACKET_WANT,
+	GIT_SMART_PACKET_HAVE,
+	GIT_SMART_PACKET_DONE
+} git_smart_packet_t;
 
 typedef enum {
 	GIT_SMART_CAPABILITY_MULTI_ACK                    = (1 <<  0),
@@ -38,27 +51,32 @@ typedef enum {
 	GIT_SMART_CAPABILITY_PUSH_CERT                    = (1 << 25),
 	GIT_SMART_CAPABILITY_FILTER                       = (1 << 26),
 	GIT_SMART_CAPABILITY_SESSION_ID                   = (1 << 27)
-} git_smart_capability_t;
+} git_smart_capability;
 
-#define GIT_SMART_CLIENT_CAPABILITIES \
-	(GIT_SMART_CAPABILITY_MULTI_ACK          | \
-	 GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED | \
-	 GIT_SMART_CAPABILITY_NO_DONE            | \
-	 GIT_SMART_CAPABILITY_THIN_PACK          | \
-/*       GIT_SMART_CAPABILITY_SIDE_BAND          | */ \
-/*       GIT_SMART_CAPABILITY_SIDE_BAND_64K      | */ \
-	 GIT_SMART_CAPABILITY_OFS_DELTA          | \
-	 GIT_SMART_CAPABILITY_AGENT              | \
-	 GIT_SMART_CAPABILITY_OBJECT_FORMAT      | \
-	 GIT_SMART_CAPABILITY_SYMREF             | \
-	 GIT_SMART_CAPABILITY_NO_PROGRESS        | \
-	 GIT_SMART_CAPABILITY_INCLUDE_TAG        | \
-	 GIT_SMART_CAPABILITY_SESSION_ID)
+struct git_smart_packet {
+	git_smart_packet_t type;
 
+	/* Raw data in the packet */
+	const char *data;
+	size_t len;
+
+	/* If the packet "owns" the raw data and should be free */
+	int owned;
+
+	/* For wants, haves, etc, the object ID in question */
+	git_oid oid;
+
+	/* The first want packet includes capabilities */
+	const char *capabilities;
+	size_t capabilities_len;
+};
 
 typedef struct git_smart_client git_smart_client;
 
-int git_smart_client_init(git_smart_client **out, git_repository *repo);
+int git_smart_client_init(
+	git_smart_client **out,
+	git_repository *repo);
+int git_smart_client_fetchpack(git_smart_client *out);
 void git_smart_client_free(git_smart_client *client);
 
 #endif

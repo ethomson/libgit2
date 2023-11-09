@@ -16,6 +16,7 @@
 #include "push.h"
 #include "remote.h"
 #include "process.h"
+#include "smart_new.h"
 
 #include "git2/types.h"
 #include "git2/net.h"
@@ -37,6 +38,7 @@ typedef struct {
 	git_remote_connect_options connect_opts;
 
 	git_process *process;
+	git_smart_client *client;
 
 	int connected : 1;
 } transport_local;
@@ -97,9 +99,23 @@ static int local_connect(
 	if (git_process_new_from_cmdline(&transport->process,
 			cmdline.ptr, NULL, 0,
 			&process_opts) < 0 ||
-	    git_process_start(transport->process) < 0) {
-		git_process_free(transport->process);
+	    git_smart_client_init(&transport->client,
+			transport->owner->repo) < 0 ||
+	    git_process_start(transport->process) < 0)
 		goto done;
+
+	if (direction == GIT_DIRECTION_FETCH) {
+		if (git_smart_client_fetchpack(transport->client) < 0)
+			goto done;
+	} else if (direction == GIT_DIRECTION_PUSH) {
+		/* TODO
+		if (git_smart_client_sendpack() < 0)
+			goto done;
+		*/
+		abort();
+
+	} else {
+		GIT_ASSERT(!"invalid direction");
 	}
 
 	transport->connected = 1;
@@ -140,6 +156,8 @@ static int local_capabilities(
 	unsigned int *capabilities,
 	git_transport *_transport)
 {
+	abort();
+
 /*
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
@@ -187,6 +205,8 @@ static void local_free(git_transport *_transport)
 	transport_local *transport =
 		GIT_CONTAINER_OF(_transport, transport_local, parent);
 
+	git_smart_client_free(transport->client);
+	git_process_free(transport->process);
 	git__free(transport);
 }
 
@@ -208,6 +228,7 @@ int git_transport_local(
 	transport->parent.connect = local_connect;
 	transport->parent.set_connect_opts = local_set_connect_opts;
 	transport->parent.is_connected = local_is_connected;
+	transport->parent.capabilities = local_capabilities;
 	transport->parent.close = local_close;
 	transport->parent.free = local_free;
 
