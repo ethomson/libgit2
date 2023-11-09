@@ -4,8 +4,89 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+
+
+
+
+
+
+
+
+
         {
-            "name": "(gdb) Launch",
+            "name": "git2 clone file",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/git2",
+            "args": [ "clone", "file:///tmp/testrepo" ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/testrepo",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "git2 clone https",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/git2",
+            "args": [ "clone", "https://github.com/libgit2/TestGitRepository" ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "git2 fetch https",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/git2",
+            "args": [ "fetch", "origin" ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/testrepo",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "git2 fetch git",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/git2",
+            "args": [ "fetch", "dummygit" ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "git2 fetch file",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/git2",
+            "args": [ "fetch", "dummy" ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "git2 push file",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/git2",
+            "args": [ "push" ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/testrepo",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "lldb: libgit2 tests",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/libgit2_tests",
@@ -14,7 +95,45 @@
             "cwd": "${fileDirname}",
             "environment": [],
             "externalConsole": false,
-            "MIMode": "gdb",
+            "MIMode": "lldb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "lldb: git2util tests",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/util_tests",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "lldb: git2 cli",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/git2",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb",
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",

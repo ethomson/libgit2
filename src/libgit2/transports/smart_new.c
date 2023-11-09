@@ -315,6 +315,9 @@ GIT_INLINE(int) smart_io_reader_fill(struct smart_io *io, size_t len)
 
 		buf = io->read_buf.ptr + io->read_buf.size;
 
+		/* We may "fake" a stream -- ensure that if we do, it was filled. */
+		GIT_ASSERT(io->stream);
+
 		if ((ret = git_stream_read(io->stream, buf, READ_SIZE)) < 0)
 			return -1;
 
@@ -360,25 +363,6 @@ GIT_INLINE(int) smart_io_reader_consume(struct smart_io *io, size_t len)
 	return 0;
 }
 
-static int parse_len(const char *buf, size_t len)
-{
-	int value;
-
-	if (!isxdigit(buf[0]) || !isxdigit(buf[1]) ||
-	    !isxdigit(buf[2]) || !isxdigit(buf[3])) {
-		git_error_set(GIT_ERROR_NET, "invalid packet - incorrectly encoded length: '%c%c%c%c'", buf[0], buf[1], buf[2], buf[3]);
-		return -1;
-	}
-
-	if (git__strntol64(&value, buf, 4, NULL, 16) < 0 ||
-	    value < 0 || value > USHORT_MAX - 4) {
-		git_error_set(GIT_ERROR_NET, "invalid packet - invalid decoded length");
-		return -1;
-	}
-
-	return value;
-}
-
 static int pkt_parse_len(struct smart_io *io)
 {
 	int64_t value;
@@ -390,8 +374,19 @@ static int pkt_parse_len(struct smart_io *io)
 		return -1;
 	}
 
-	if ((value = parse_len(io->read_remain_data)) < 0)
+	if (!isxdigit(io->read_remain_data[0]) ||
+	    !isxdigit(io->read_remain_data[1]) ||
+	    !isxdigit(io->read_remain_data[2]) ||
+	    !isxdigit(io->read_remain_data[3])) {
+		git_error_set(GIT_ERROR_NET, "invalid packet - incorrectly encoded length: '%c%c%c%c'", io->read_remain_data[0], io->read_remain_data[1], io->read_remain_data[2], io->read_remain_data[3]);
 		return -1;
+	}
+
+	if (git__strntol64(&value, io->read_remain_data, 4, NULL, 16) < 0 ||
+	    value < 0 || value > UINT_MAX - 4) {
+		git_error_set(GIT_ERROR_NET, "invalid packet - invalid decoded length");
+		return -1;
+	}
 
 	io->read_len = value;
 	io->read_remain_len = value;
@@ -438,6 +433,15 @@ static int pkt_parse_type(struct smart_io *io)
 	else if (git__strncmp(io->read_remain_data, "NAK\n", io->read_remain_len) == 0) {
 		io->read_pkt.type = GIT_SMART_PACKET_NAK;
 		return smart_io_reader_consume(io, CONST_STRLEN("NAK\n"));
+	}
+
+	else if (git__prefixncmp(io->read_remain_data, io->read_remain_len, "unpack ") == 0) {
+		io->read_pkt.type = GIT_SMART_PACKET_UNPACK;
+		return smart_io_reader_consume(io, CONST_STRLEN("unpack "));
+	}
+	else if (git__prefixncmp(io->read_remain_data, io->read_remain_len, "ok ") == 0) {
+		io->read_pkt.type = GIT_SMART_PACKET_OK;
+		return smart_io_reader_consume(io, CONST_STRLEN("ok "));
 	}
 
 	else if (io->read_remain_len >= 1 && io->read_remain_data[0] == 1) {
@@ -906,6 +910,36 @@ fflush(debug);
 	return 0;
 }
 
+static int pkt_parse_unpack(struct smart_io *io)
+{
+	if (pkt_parse_string(io, "ok", "unpack status") < 0 ||
+	    pkt_parse_char(io, '\n', "newline") < 0 ||
+	    pkt_ensure_consumed(io) < 0)
+		return -1;
+
+	return 0;
+}
+
+static int pkt_parse_ok(struct smart_io *io)
+{
+	if (pkt_parse_refname(io) < 0 ||
+	    pkt_parse_char(io, '\n', "newline") < 0 ||
+	    pkt_ensure_consumed(io) < 0)
+		return -1;
+
+	return 0;
+}
+
+static int pkt_parse_ng(struct smart_io *io)
+{
+	if (pkt_parse_refname(io) < 0 ||
+	    pkt_parse_char(io, '\n', "newline") < 0 ||
+	    pkt_ensure_consumed(io) < 0)
+		return -1;
+
+	return 0;
+}
+
 static int pkt_parse_sideband(struct smart_io *io)
 {
 	io->read_pkt.sideband = io->read_remain_data;
@@ -993,6 +1027,15 @@ int pkt_read(struct git_smart_packet **out, struct smart_io *io)
 			break;
 		case GIT_SMART_PACKET_DONE:
 			error = 0;
+			break;
+		case GIT_SMART_PACKET_UNPACK:
+			error = pkt_parse_unpack(io);
+			break;
+		case GIT_SMART_PACKET_OK:
+			error = pkt_parse_ok(io);
+			break;
+		case GIT_SMART_PACKET_NG:
+			error = pkt_parse_ng(io);
 			break;
 		case GIT_SMART_PACKET_SIDEBAND_DATA:
 		case GIT_SMART_PACKET_SIDEBAND_PROGRESS:
@@ -1357,7 +1400,7 @@ static int handle_ref(
 static int client_set_capabilities(git_smart_client *client)
 {
 	client->capabilities &= ((client->server.capabilities & NEGOTIATED_CAPABILITIES) | ~NEGOTIATED_CAPABILITIES);
-#if 0
+
 	/* Simplify the capability set to our best offering */
 	if ((client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK) &&
 	    (client->capabilities & GIT_SMART_CAPABILITY_MULTI_ACK_DETAILED)) {
@@ -1369,7 +1412,8 @@ static int client_set_capabilities(git_smart_client *client)
 	    (client->capabilities & GIT_SMART_CAPABILITY_REPORT_STATUS_V2)) {
 		client->capabilities &= ~GIT_SMART_CAPABILITY_REPORT_STATUS;
 	}
-#endif
+
+	return 0;
 }
 
 int git_smart_client_connect(git_smart_client *client)
@@ -2008,6 +2052,8 @@ static int handle_report(
 		return 0;
 	}
 
+	GIT_ASSERT(pkt->type == GIT_SMART_PACKET_OK || pkt->type == GIT_SMART_PACKET_NG);
+
 	status = git__calloc(1, sizeof(push_status));
 	GIT_ERROR_CHECK_ALLOC(status);
 
@@ -2025,44 +2071,57 @@ static int handle_report(
 	return 0;
 }
 
+GIT_INLINE(void) create_sideband_io(struct smart_io *out, git_smart_client *client)
+{
+	memset(out, 0, sizeof(struct smart_io));
+
+	out->read_buf.ptr = client->server.sideband_buf.ptr;
+	out->read_buf.size = client->server.sideband_buf.size;
+	out->read_remain_data = client->server.sideband_buf.ptr;
+	out->read_remain_len = client->server.sideband_buf.size;
+	out->received_flush = client->server.received_flush;
+}
+
 static int handle_report_sideband(
 	git_smart_client *client,
 	git_push *push,
 	struct git_smart_packet *pkt)
 {
-	int len;
-
-	/*
-	 * When sending the results, it writes the push report packets
-	 * (ok/ng/unpack ok) within a sideband packet. So we need to buffer the
-	 * sideband output and reparse it as packets. :/
-	 */
-	if (git_str_put(client->server.sideband_buf, pkt->sideband, pkt->sideband_len) < 0)
+	if (git_str_put(&client->server.sideband_buf, pkt->sideband, pkt->sideband_len) < 0)
 		return -1;
 
 	/* Need at least four bytes for a packet */
 	while (client->server.sideband_buf.size >= 4) {
-		size_t consumed = 0;
+		struct smart_io sideband_io;
+		struct git_smart_packet *pkt;
 
-		if ((len = parse_len(client->server.sideband_buf, client->server.sideband_buf.size)) < 0)
+		/*
+		 * When sending the results, git writes the push report packets
+		 * (ok/ng/unpack ok) within a sideband packet. So we need to buffer the
+		 * sideband output and reparse it as packets. Gross. Re-use our
+		 * `git_smart_io` functionality by creating our own fake io channel with
+		 * the sideband buffer.
+		 */
+		create_sideband_io(&sideband_io, client);
+
+		/*
+		 * Parse the packet len -- bail if we don't have the full packet in
+		 * the buffer.
+		 */
+		if (pkt_parse_len(&sideband_io) < 0)
 			return -1;
 
-		if ((client->server.sideband_buf.size - 4) < len)
+		if ((client->server.sideband_buf.size - 4) < sideband_io.read_len)
 			break;
 
-		git_str_consume_bytes(&client->server.sideband_buf, 4);
+		/* We know we have the full packet, so reset and parse it. */
+		smart_io_reader_set_position(&sideband_io, 0);
 
-		if (len == 0) {
-			pkt = flush;
-		} else {
-			pkt.type ...
-
-		}
-
-		if (handle_report(client, push, pkt) < 0)
+		if (pkt_read(&pkt, &sideband_io) < 0 ||
+		    handle_report(client, push, pkt) < 0)
 			return -1;
 
-		git_str_consume_bytes(&client->server.sideband_buf, (size_t)len);
+		git_str_consume_bytes(&client->server.sideband_buf, pkt->len);
 	}
 
 	return 0;
@@ -2121,8 +2180,65 @@ static int client_parse_report(git_smart_client *client, git_push *push)
 	return 0;
 }
 
+static int push_spec_refcmp(const void *_a, const void *_b)
+{
+	const push_spec *a = _a, *b = _b;
+	return strcmp(a->refspec.dst, b->refspec.dst);
+}
+
+static int push_status_refcmp(const void *_a, const void *_b)
+{
+	const push_status *a = _a, *b = _b;
+	return strcmp(a->ref, b->ref);
+}
+
+static int remote_head_refcmp(const void *_a, const void *_b)
+{
+	const git_remote_head *a = _a, *b = _b;
+	return strcmp(a->name, b->name);
+}
+
+static int remote_head_deleted(const git_vector *heads, size_t idx, void *payload)
+{
+	git_remote_head *remote_head = heads->contents[idx];
+
+	GIT_UNUSED(payload);
+
+	if (!git_oid_is_zero(&remote_head->oid))
+		return 0;
+
+	git__free(remote_head->name);
+	git__free(remote_head->symref_target);
+	git__free(remote_head);
+	return 1;
+}
+
+static int add_head_from_update(git_vector *remote_heads, push_spec *push_spec)
+{
+	git_remote_head *remote_head = git__calloc(1, sizeof(git_remote_head));
+	GIT_ERROR_CHECK_ALLOC(remote_head);
+
+	if (git_oid_cpy(&remote_head->oid, &push_spec->loid) < 0)
+		return -1;
+
+	remote_head->name = git__strdup(push_spec->refspec.dst);
+	GIT_ERROR_CHECK_ALLOC(remote_head->name);
+
+	return git_vector_insert_sorted(remote_heads, remote_head, NULL);
+}
+
 static int handle_updates(git_smart_client *client, git_push *push)
 {
+	git_vector push_specs = GIT_VECTOR_INIT,
+	           push_statuses = GIT_VECTOR_INIT,
+	           remote_heads = GIT_VECTOR_INIT;
+	push_spec *push_spec;
+	push_status *push_status;
+	git_remote_head *remote_head;
+	int cmp;
+	size_t i, j;
+	int error = -1;
+
 	/* 
 	 * For each push spec we sent to the server, we should have
 	 * gotten back a status packet in the push report.
@@ -2132,23 +2248,27 @@ static int handle_updates(git_smart_client *client, git_push *push)
 		return -1;
 	}
 
-#if 0
-	git_pkt_ref *ref;
-	push_spec *push_spec;
-	push_status *push_status;
-	size_t i, j, heads_len;
-	int cmp;
-
+	/*
+	 * We want sorted vectors to compare against each other, so dup to avoid
+	 * modifying the existing structures thta we may have returned to callers.
+	 */
+	/* TODO: can we just pull the push data into here? we probably want to still
+	 * avoid modifying remote_heads since we returned it to callers but this feels like overkill */
+	if (git_vector_dup(&push_specs, &push->specs, push_spec_refcmp) < 0 ||
+	    git_vector_dup(&push_statuses, &push->status, push_status_refcmp) < 0 ||
+	    git_vector_dup(&remote_heads, &client->heads, remote_head_refcmp) < 0)
+		goto done;
 
 	/*
 	 * We require that push_specs be sorted with push_spec_rref_cmp,
 	 * and that push_report be sorted with push_status_ref_cmp
 	 */
-	git_vector_sort(&push->specs);
-	git_vector_sort(&push->status);
+	git_vector_sort(&push_specs);
+	git_vector_sort(&push_statuses);
+	git_vector_sort(&remote_heads);
 
-	git_vector_foreach(&push->specs, i, push_spec) {
-		push_status = git_vector_get(&push->status, i);
+	git_vector_foreach(&push_specs, i, push_spec) {
+		push_status = git_vector_get(&push_statuses, i);
 
 		/*
 		 * For each push spec we sent to the server, we should have
@@ -2160,59 +2280,87 @@ static int handle_updates(git_smart_client *client, git_push *push)
 		}
 	}
 
-/* TODO */
-	/* We require that refs be sorted with ref_name_cmp */
-	git_vector_sort(&client->heads);
-	i = j = 0;
-	heads_len = client->heads.length;
-
 	/* Merge join push_specs with refs */
-	while (i < push_specs->length && j < refs_len) {
-		push_spec = git_vector_get(push_specs, i);
-		push_status = git_vector_get(push_report, i);
-		ref = git_vector_get(refs, j);
+	for (i = 0, j = 0; i < push_specs.length; ) {
+		push_spec = git_vector_get(&push_specs, i);
+		push_status = git_vector_get(&push_statuses, i);
 
-		cmp = strcmp(push_spec->refspec.dst, ref->head.name);
+		if (j < remote_heads.length) {
+			remote_head = git_vector_get(&remote_heads, j);
+			cmp = strcmp(push_spec->refspec.dst, remote_head->name);
+		} else {
+			remote_head = NULL;
+			cmp = -1;
+		}
 
 		/* Iterate appropriately */
 		if (cmp <= 0) i++;
 		if (cmp >= 0) j++;
 
 		/* Add case */
-		if (cmp < 0 &&
-			!push_status->msg &&
-			add_ref_from_push_spec(refs, push_spec) < 0)
+		if (cmp < 0 && !push_status->msg && add_head_from_update(&client->heads, push_spec) < 0)
 			return -1;
 
+/* TODO: wtf why are we updating this in-memory - is that ok? */
 		/* Update case, delete case */
-		if (cmp == 0 &&
-			!push_status->msg)
-			git_oid_cpy(&ref->head.oid, &push_spec->loid);
-	}
-
-	for (; i < push_specs->length; i++) {
-		push_spec = git_vector_get(push_specs, i);
-		push_status = git_vector_get(push_report, i);
-
-		/* Add case */
-		if (!push_status->msg &&
-			add_ref_from_push_spec(refs, push_spec) < 0)
-			return -1;
+		if (cmp == 0 && !push_status->msg)
+			git_oid_cpy(&remote_head->oid, &push_spec->loid);
 	}
 
 	/* Remove any refs which we updated to have a zero OID. */
-	git_vector_rforeach(refs, i, ref) {
-		if (git_oid_is_zero(&ref->head.oid)) {
-			git_vector_remove(refs, i);
-			git_pkt_free((git_pkt *)ref);
+	git_vector_remove_matching(&remote_heads, remote_head_deleted, &remote_heads);
+
+/* TODO: insert will handle sorting once this is split into two data structures */
+	git_vector_sort(&client->heads);
+
+done:
+	git_vector_free(&push_specs);
+	git_vector_free(&push_statuses);
+	git_vector_free(&remote_heads);
+
+	return error;
+}
+
+
+int git_smart__update_heads(transport_smart *t, git_vector *symrefs)
+{
+	size_t i;
+	git_pkt *pkt;
+
+	git_vector_clear(&t->heads);
+	git_vector_foreach(&t->refs, i, pkt) {
+		git_pkt_ref *ref = (git_pkt_ref *) pkt;
+		if (pkt->type != GIT_PKT_REF)
+			continue;
+
+		if (symrefs) {
+			git_refspec *spec;
+			git_str buf = GIT_STR_INIT;
+			size_t j;
+			int error = 0;
+
+			git_vector_foreach(symrefs, j, spec) {
+				git_str_clear(&buf);
+				if (git_refspec_src_matches(spec, ref->head.name) &&
+				    !(error = git_refspec__transform(&buf, spec, ref->head.name))) {
+					git__free(ref->head.symref_target);
+					ref->head.symref_target = git_str_detach(&buf);
+				}
+			}
+
+			git_str_dispose(&buf);
+
+			if (error < 0)
+				return error;
 		}
+
+		if (git_vector_insert(&t->heads, &ref->head) < 0)
+			return -1;
 	}
 
-	git_vector_sort(refs);
-
 	return 0;
-#endif
 }
+
 
 int git_smart_client_push(git_smart_client *client, git_push *push)
 {

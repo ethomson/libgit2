@@ -393,6 +393,23 @@ static int setup_shallow_roots(
 	return 0;
 }
 
+static void fake_common(transport_smart *t)
+{
+	git_pkt_ack *pkt;
+	size_t i, j;
+
+	for (i = 0; i < 16; i++) {
+		pkt = git__calloc(1, sizeof(git_pkt_ack));
+		pkt->type = GIT_PKT_ACK;
+
+		for (j = 0; j < 20; j++) {
+			pkt->oid.id[j] = (i << 8) | i;
+		}
+
+		git_vector_insert(&t->common, pkt);
+	}
+}
+
 int git_smart__negotiate_fetch(
 	git_transport *transport,
 	git_repository *repo,
@@ -406,6 +423,8 @@ int git_smart__negotiate_fetch(
 	git_pkt_type pkt_type;
 	unsigned int i;
 	git_oid oid;
+
+	fake_common(t);
 
 	if ((error = setup_caps(&t->caps, wants)) < 0 ||
 	    (error = setup_shallow_roots(&t->shallow_roots, wants)) < 0)
@@ -471,7 +490,7 @@ int git_smart__negotiate_fetch(
 
 		git_pkt_buffer_have(&oid, &data);
 		i++;
-		if (i % 20 == 0) {
+		if (i % 1 == 0) {
 			if (t->cancelled.val) {
 				git_error_set(GIT_ERROR_NET, "The fetch was cancelled by the user");
 				error = GIT_EUSER;
@@ -510,7 +529,7 @@ int git_smart__negotiate_fetch(
 		if (t->common.length > 0)
 			break;
 
-		if (i % 20 == 0 && t->rpc) {
+		if (i % 1 == 0 && t->rpc) {
 			git_pkt_ack *pkt;
 			unsigned int j;
 

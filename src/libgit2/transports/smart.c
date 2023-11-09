@@ -317,8 +317,7 @@ int git_smart__negotiation_step(git_transport *transport, void *data, size_t len
 	/* If this is a stateful implementation, the stream we get back should be the same */
 	GIT_ASSERT(t->rpc || t->current_stream == stream);
 
-	/* Save off the current stream (i.e. socket) that we are working with */
-	t->current_stream = stream;
+	/* Save off the current stream (i.e. socket) that we are working with */	t->current_stream = stream;
 
 	if ((error = stream->write(stream, (const char *)data, len)) < 0)
 		return error;

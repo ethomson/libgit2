@@ -38,6 +38,7 @@ const cli_cmd_spec cli_cmds[] = {
 	{ "fetch",       cmd_fetch,       "Fetch changes from a remote repository" },
 	{ "hash-object", cmd_hash_object, "Hash a raw object and product its object ID" },
 	{ "help",        cmd_help,        "Display help information" },
+	{ "push",        cmd_push,        "Push changes to a remote repository" },
 	{ NULL }
 };
 

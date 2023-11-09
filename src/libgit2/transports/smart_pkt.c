@@ -580,6 +580,7 @@ int git_pkt_parse_line(
 {
 	int error;
 	size_t len;
+	int fd;
 
 	if ((error = parse_len(&len, line, linelen)) < 0) {
 		/*
@@ -627,6 +628,12 @@ int git_pkt_parse_line(
 		*endptr = line;
 		return flush_pkt(pkt);
 	}
+
+
+	fd = open("/tmp/client-2-debug", O_RDWR|O_CREAT|O_APPEND, 0666);
+	write(fd, line, len);
+	close(fd);
+
 
 	len -= PKT_LEN_SIZE; /* the encoded length includes its own size */
 
