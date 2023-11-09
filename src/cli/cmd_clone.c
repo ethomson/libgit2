@@ -161,6 +161,7 @@ int cmd_clone(int argc, char **argv)
 	clone_opts.fetch_opts.depth = compute_depth(depth);
 	clone_opts.repository_cb = repository_create;
 	clone_opts.repository_cb_payload = &init_opts;
+	clone_opts.fetch_opts.proxy_opts.type = GIT_PROXY_AUTO;
 
 	if (!checkout)
 		clone_opts.checkout_opts.checkout_strategy = GIT_CHECKOUT_NONE;
