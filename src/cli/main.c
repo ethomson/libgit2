@@ -28,10 +28,14 @@ const cli_opt_spec cli_common_opts[] = {
 };
 
 const cli_cmd_spec cli_cmds[] = {
-	{ "cat-file",    cmd_cat_file,    "Display an object in the repository" },
-	{ "clone",       cmd_clone,       "Clone a repository into a new directory" },
-	{ "hash-object", cmd_hash_object, "Hash a raw object and product its object ID" },
-	{ "help",        cmd_help,        "Display help information" },
+	{ "cat-file",     cmd_cat_file,     "Display an object in the repository" },
+	{ "clone",        cmd_clone,        "Clone a repository into a new directory" },
+	{ "hash-object",  cmd_hash_object,  "Hash a raw object and product its object ID" },
+	{ "help",         cmd_help,         "Display help information" },
+	{ "receive-pack", cmd_receive_pack, "Accept a push from a git client" },
+	{ "upload-pack",  cmd_upload_pack,  "Serve a fetch to a git client" },
+
+
 	{ NULL }
 };
 
