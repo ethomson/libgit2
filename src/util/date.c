@@ -251,7 +251,7 @@ static size_t match_multi_number(unsigned long num, char c, const char *date, ch
 
 	num2 = strtol(end+1, &end, 10);
 	num3 = -1;
-	if (*end == c && isdigit((unsigned char)end[1]))
+	if (*end == c && git__isdigit(end[1]))
 		num3 = strtol(end+1, &end, 10);
 
 	/* Time? Date? */
@@ -349,7 +349,7 @@ static size_t match_digit(const char *date, struct tm *tm, int *offset, int *tm_
 	case '.':
 	case '/':
 	case '-':
-		if (isdigit((unsigned char)end[1])) {
+		if (git__isdigit(end[1])) {
 			size_t match = match_multi_number(num, *end, date, end, tm);
 			if (match)
 				return match;
@@ -364,7 +364,7 @@ static size_t match_digit(const char *date, struct tm *tm, int *offset, int *tm_
 	n = 0;
 	do {
 		n++;
-	} while (isdigit((unsigned char)date[n]));
+	} while (git__isdigit(date[n]));
 
 	/* Four-digit year or a timezone? */
 	if (n == 4) {
@@ -516,9 +516,9 @@ static int parse_date_basic(const char *date, git_time_t *timestamp, int *offset
 
 		if (isalpha(c))
 			match = match_alpha(date, &tm, offset);
-		else if (isdigit(c))
+		else if (git__isdigit(c))
 			match = match_digit(date, &tm, offset, &tm_gmt);
-		else if ((c == '-' || c == '+') && isdigit((unsigned char)date[1]))
+		else if ((c == '-' || c == '+') && git__isdigit(date[1]))
 			match = match_tz(date, offset);
 
 		if (!match) {
@@ -783,7 +783,7 @@ static const char *approxidate_digit(const char *date, struct tm *tm, int *num)
 	case '.':
 	case '/':
 	case '-':
-		if (isdigit((unsigned char)end[1])) {
+		if (git__isdigit(end[1])) {
 			size_t match = match_multi_number(number, *end, date, end, tm);
 			if (match)
 				return date + match;
@@ -843,7 +843,7 @@ static git_time_t approxidate_str(const char *date,
 		if (!c)
 			break;
 		date++;
-		if (isdigit(c)) {
+		if (git__isdigit(c)) {
 			pending_number(&tm, &number);
 			date = approxidate_digit(date-1, &tm, &number);
 			touched = 1;
