@@ -24,7 +24,7 @@ static const char *const git_generated_prefixes[] = {
 static int is_blank_line(const char *str)
 {
 	const char *s = str;
-	while (*s && *s != '\n' && isspace((unsigned char)*s))
+	while (*s && *s != '\n' && git__isspace(*s))
 		s++;
 	return !*s || *s == '\n';
 }
@@ -233,12 +233,12 @@ static size_t find_trailer_start(const char *buf, size_t len)
 		}
 
 		find_separator(&separator_pos, bol, TRAILER_SEPARATORS);
-		if (separator_pos >= 1 && !isspace((unsigned char)bol[0])) {
+		if (separator_pos >= 1 && !git__isspace(bol[0])) {
 			trailer_lines++;
 			possible_continuation_lines = 0;
 			if (recognized_prefix)
 				continue;
-		} else if (isspace((unsigned char)bol[0]))
+		} else if (git__isspace(bol[0]))
 			possible_continuation_lines++;
 		else {
 			non_trailer_lines++;
