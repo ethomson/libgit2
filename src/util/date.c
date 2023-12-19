@@ -143,7 +143,7 @@ static int skip_alpha(const char *date)
 	int i = 0;
 	do {
 		i++;
-	} while (isalpha((unsigned char)date[i]));
+	} while (git__isalpha(date[i]));
 	return i;
 }
 
@@ -514,7 +514,7 @@ static int parse_date_basic(const char *date, git_time_t *timestamp, int *offset
 		if (!c || c == '\n')
 			break;
 
-		if (isalpha(c))
+		if (git__isalpha(c))
 			match = match_alpha(date, &tm, offset);
 		else if (git__isdigit(c))
 			match = match_digit(date, &tm, offset, &tm_gmt);
@@ -682,7 +682,7 @@ static const char *approxidate_alpha(const char *date, struct tm *tm, struct tm 
 	const char *end = date;
 	int i;
 
-	while (isalpha((unsigned char)*++end))
+	while (git__isalpha(*++end))
 		/* scan to non-alpha */;
 
 	for (i = 0; i < 12; i++) {
@@ -849,7 +849,7 @@ static git_time_t approxidate_str(const char *date,
 			touched = 1;
 			continue;
 		}
-		if (isalpha(c))
+		if (git__isalpha(c))
 			date = approxidate_alpha(date-1, &tm, &now, &number, &touched);
 	}
 	pending_number(&tm, &number);
