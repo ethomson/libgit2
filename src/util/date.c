@@ -129,7 +129,7 @@ static size_t match_string(const char *date, const char *str)
 	for (i = 0; *date; date++, str++, i++) {
 		if (*date == *str)
 			continue;
-		if (toupper((unsigned char)*date) == toupper((unsigned char)*str))
+		if (git__toupper(*date) == git__toupper(*str))
 			continue;
 		if (!git__isalnum(*date))
 			break;

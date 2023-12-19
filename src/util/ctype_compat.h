@@ -20,6 +20,11 @@ GIT_INLINE(int) git__tolower(int c)
 	return (c >= 'A' && c <= 'Z') ? (c + 32) : c;
 }
 
+GIT_INLINE(int) git__toupper(int c)
+{
+	return (c >= 'a' && c <= 'z') ? (c - 32) : c;
+}
+
 GIT_INLINE(bool) git__isalpha(int c)
 {
 	return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
@@ -56,6 +61,7 @@ GIT_INLINE(bool) git__isprint(int c)
 
 #else
 # define git__tolower(a) tolower((unsigned char)(a))
+# define git__toupper(a) toupper((unsigned char)(a))
 # define git__isalpha(a) isalpha((unsigned char)(a))
 # define git__isdigit(a) isdigit((unsigned char)(a))
 # define git__isalnum(a) isalnum((unsigned char)(a))
