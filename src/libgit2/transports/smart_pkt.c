@@ -538,7 +538,7 @@ static int parse_len(size_t *out, const char *line, size_t linelen)
 		if (!git__isxdigit(num[i])) {
 			/* Make sure there are no special characters before passing to error message */
 			for (k = 0; k < PKT_LEN_SIZE; ++k) {
-				if(!isprint((unsigned char)num[k])) {
+				if(!git__isprint(num[k])) {
 					num[k] = '.';
 				}
 			}
