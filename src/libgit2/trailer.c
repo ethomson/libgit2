@@ -93,7 +93,7 @@ static bool find_separator(size_t *out, const char *line, const char *separators
 			return true;
 		}
 
-		if (!whitespace_found && (isalnum((unsigned char)*c) || *c == '-'))
+		if (!whitespace_found && (git__isalnum(*c) || *c == '-'))
 			continue;
 		if (c != line && (*c == ' ' || *c == '\t')) {
 			whitespace_found = 1;
@@ -323,7 +323,7 @@ int git_message_trailers(git_message_trailer_array *trailer_arr, const char *mes
 					goto ret;
 				}
 
-				if (isalnum((unsigned char)*ptr) || *ptr == '-') {
+				if (git__isalnum(*ptr) || *ptr == '-') {
 					/* legal key character */
 					NEXT(S_KEY);
 				}

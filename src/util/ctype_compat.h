@@ -29,7 +29,12 @@ GIT_INLINE(bool) git__isdigit(int c)
 {
 	return (c >= '0' && c <= '9');
 }
--
+
+GIT_INLINE(bool) git__isalnum(int c)
+{
+	return git__isalpha(c) || git__isdigit(c);
+}
+
 GIT_INLINE(bool) git__isspace(int c)
 {
 	return (c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == '\v');
@@ -44,6 +49,7 @@ GIT_INLINE(bool) git__isxdigit(int c)
 # define git__tolower(a) tolower((unsigned char)(a))
 # define git__isalpha(a) isalpha((unsigned char)(a))
 # define git__isdigit(a) isdigit((unsigned char)(a))
+# define git__isalnum(a) isalnum((unsigned char)(a))
 # define git__isspace(a) isspace((unsigned char)(a))
 # define git__isxdigit(a) isxdigit((unsigned char)(a))
 #endif

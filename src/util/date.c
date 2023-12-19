@@ -131,7 +131,7 @@ static size_t match_string(const char *date, const char *str)
 			continue;
 		if (toupper((unsigned char)*date) == toupper((unsigned char)*str))
 			continue;
-		if (!isalnum((unsigned char)*date))
+		if (!git__isalnum(*date))
 			break;
 		return 0;
 	}
