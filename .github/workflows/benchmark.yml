@@ -85,7 +85,8 @@ jobs:
       shell: bash
     - name: Benchmark
       run: |
-        export BENCHMARK_RESOURCES_PATH="$(pwd)/resources"
+        # avoid benchmark resource path currently
+        #export BENCHMARK_RESOURCES_PATH="$(pwd)/resources"
         export BENCHMARK_GIT_PATH="$(pwd)/resources/git"
         # avoid linux temporarily; the linux blame benchmarks are simply
         # too slow to use
