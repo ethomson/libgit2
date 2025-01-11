@@ -135,40 +135,55 @@ jobs:
         ssh-key: ${{ secrets.BENCHMARKS_PUBLISH_KEY }}
     - name: Download test results
       uses: actions/download-artifact@v4
-    - name: Publish API
+    - name: Generate API
       run: |
-       # Move today's benchmark run into the right place
-       for platform in linux macos windows; do
-         TIMESTAMP=$(jq .time.start < "benchmark-${platform}/benchmarks.json")
-         TIMESTAMP_LEN=$(echo -n ${TIMESTAMP} | wc -c | xargs)
-         DENOMINATOR=1
-         if [ "${TIMESTAMP_LEN}" = "19" ]; then
-           DENOMINATOR="1000000000"
-         elif [ "${TIMESTAMP_LEN}" = "13" ]; then
-           DENOMINATOR="1000"
-         else
-           echo "unknown timestamp"
-           exit 1
-         fi
+        # Move today's benchmark run into the right place
+        for platform in linux macos windows; do
+          TIMESTAMP=$(jq .time.start < "benchmark-${platform}/benchmarks.json")
+          TIMESTAMP_LEN=$(echo -n ${TIMESTAMP} | wc -c | xargs)
+          DENOMINATOR=1
+          if [ "${TIMESTAMP_LEN}" = "19" ]; then
+            DENOMINATOR="1000000000"
+          elif [ "${TIMESTAMP_LEN}" = "13" ]; then
+            DENOMINATOR="1000"
+          else
+            echo "unknown timestamp"
+            exit 1
+          fi
 
-         if [[ "$(uname -s)" == "Darwin" ]]; then
-           DATE=$(date -R -r $(("${TIMESTAMP}/${DENOMINATOR}")) +"%Y-%m-%d")
-         else
-           DATE=$(date -d @$(("${TIMESTAMP}/${DENOMINATOR}")) +"%Y-%m-%d")
-         fi
+          if [[ "$(uname -s)" == "Darwin" ]]; then
+            DATE=$(date -R -r $(("${TIMESTAMP}/${DENOMINATOR}")) +"%Y-%m-%d")
+          else
+            DATE=$(date -d @$(("${TIMESTAMP}/${DENOMINATOR}")) +"%Y-%m-%d")
+          fi
 
-         mkdir -p "site/public/api/runs/${DATE}"
-         cp "benchmark-${platform}/benchmarks.json" "site/public/api/runs/${DATE}/${platform}.json"
-       done
+          # move the complete results in
+          mkdir -p "site/public/api/runs/${DATE}"
+          cp "benchmark-${platform}/benchmarks.json" "site/public/api/runs/${DATE}/${platform}.json"
 
-       (cd site && node scripts/aggregate.js)
+          # unzip the individual results
+          mkdir -p "site/public/api/runs/${DATE}/${platform}"
+          unzip "benchmark-${platform}/benchmarks.zip" -d "site/public/api/runs/${DATE}/${platform}" '*.json' '*.svg'
+        done
 
-       (
-        cd site &&
-        git config user.name 'Benchmark Site Generation' &&
-        git config user.email 'libgit2@users.noreply.github.com' &&
-        git add . &&
-        git commit --allow-empty -m"benchmark update ${DATE}" &&
-        git push origin main
-       )
+        (cd site && node scripts/aggregate.js)
       shell: bash
+
+      # in debug mode, don't deploy the site; only create a zip file and
+      # upload it for debugging
+    - name: Upload site
+      uses: actions/upload-artifact@v4
+      with:
+        name: site
+        path: site
+      if: always()
+#    - name: Publish API
+#      run: |
+#        git config user.name 'Benchmark Site Generation' &&
+#        git config user.email 'libgit2@users.noreply.github.com' &&
+#        git add . &&
+#        git commit --allow-empty -m"benchmark update ${DATE}" &&
+#        git push origin main
+#      shell: bash
+#      working-directory: site
+#      if: always()
