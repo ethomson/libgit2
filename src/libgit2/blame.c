@@ -260,9 +260,47 @@ done:
 	return error;
 }
 
+// TODO: track filename per parent, since one parent could rename and another could *not*
+static int check_for_rename(git_blame *blame, git_tree *parent_tree, const char *parent_path)
+{
+	git_tree *current_tree = NULL;
+	git_diff *diff = NULL;
+	git_diff_options diff_opts = GIT_DIFF_OPTIONS_INIT;
+	git_strarray pathspec = {0};
+	size_t deltas, i;
+	int error;
+
+	diff_opts.flags |= GIT_DIFF_FIND_RENAMES;
+
+printf("HELLO, CHECKING FOR RENAMES\n");
+
+	if ((error = git_commit_tree(&current_tree, blame->current_commit)) < 0 ||
+	    (error = git_diff_tree_to_tree(&diff, blame->repository, parent_tree, current_tree, &diff_opts)) < 0 ||
+	    (error = git_diff_find_similar(diff, &diff_opts)) < 0)
+		goto done;
+
+	deltas = git_diff_num_deltas(diff);
+
+	/* TODO: bsearch */
+	for (i = 0; i < deltas; i++) {
+		const git_diff_delta *delta = git_diff_get_delta(diff, i);
+
+
+		printf("%d - %s %s\n", delta->status, delta->old_file.path, delta->new_file.path);
+	}
+
+abort();
+
+done:
+	git_tree_free(current_tree);
+	git_diff_free(diff);
+	return error;
+}
+
 static int compare_to_parent(
 	bool *is_unchanged,
 	bool *has_reassigned,
+	bool *parent_file_exists,
 	git_blame *blame,
 	git_commit *parent)
 {
@@ -287,14 +325,28 @@ static int compare_to_parent(
 
 	/* TODO: handle renames */
 	if ((error = git_tree_entry_bypath(&parent_tree_entry, parent_tree, blame->path)) < 0) {
+		/*
+		 * No parent entry means that either this file was renamed
+		 * or this commit introduced the file.
+		 */
 		if (error == GIT_ENOTFOUND)
-			error = 0;
+			error = check_for_rename(blame, parent_tree, blame->path);
 
-		goto done;
+		if (error < 0) {
+			if (error == GIT_ENOTFOUND)
+				error = 0;
+
+			goto done;
+		}
 	}
+
+	*parent_file_exists = true;
 
 	if ((error = git_blob_lookup(&parent_blob, blame->repository, &parent_tree_entry->oid)) < 0)
 		goto done;
+
+printf("parent has a blob: %p\n", git_blob_id(parent_blob));
+printf("parent has a blob: %s\n", git_oid_tostr_s(git_blob_id(parent_blob)));
 
 	/*
 	 * If the blob in the current commit is equal to the parent then
@@ -341,13 +393,18 @@ static int pass_presumptive_blame(git_blame *blame, git_commit *parent)
 	git_blame_line_candidate *line;
 	size_t i;
 
+	printf("PASSING PRESUMPTIVE BLAME TO PARENT: %s\n", git_oid_tostr_s(git_commit_id(parent)));
+
 	for (i = 0; i < blame->lines.size; i++) {
 		line = git_array_get(blame->lines, i);
 
 		if (line->definitive)
 			continue;
 
-		if (line->commit == blame->current_commit) {
+		/* TODO: why is this not always equal? when oid is equal?
+		 * we always do a commit_dup which should just refcount incr */
+		if (line->commit == blame->current_commit ||
+		    git_oid_equal(git_commit_id(line->commit), git_commit_id(blame->current_commit))) {
 			git_commit_free(line->commit);
 			git_commit_dup(&line->commit, parent);
 		}
@@ -408,7 +465,7 @@ static int consider_current_commit(git_blame *blame)
 	}
 	*/
 
-	printf("CONSIDERING CURRENT COMMIT\n");
+	printf("CONSIDERING CURRENT COMMIT : %s\n", git_oid_tostr_s(blame->current_commit));
 
 	/* TODO: honor first parent mode here? */
 	parent_count = git_commit_parentcount(blame->current_commit);
@@ -420,11 +477,12 @@ static int consider_current_commit(git_blame *blame)
 	for (i = 0; i < parent_count; i++) {
 		bool is_unchanged = false;
 		bool has_reassigned = false;
+		bool parent_file_exists = false;
 
-		/* printf("  EXAMINING PARENT: %d\n", (int)i); */
+		printf("  EXAMINING PARENT: %d\n", (int)i);
 
 		if (git_commit_parent(&parent, blame->current_commit, i) < 0 ||
-		    compare_to_parent(&is_unchanged, &has_reassigned, blame, parent) < 0)
+		    compare_to_parent(&is_unchanged, &has_reassigned, &parent_file_exists, blame, parent) < 0)
 			goto done;
 
 		/*
@@ -442,6 +500,12 @@ static int consider_current_commit(git_blame *blame)
 		/* Record this commit if it contributed. */
 		if (has_reassigned)
 			mark_as_contributor(blame, parent);
+
+		/* This commit introduced this file */
+		if (!parent_file_exists) {
+			printf("PARENT FILE DOES NOT EXIST!\n");
+			break;
+		}
 
 		git_commit_free(parent);
 		parent = NULL;
@@ -466,8 +530,10 @@ static int consider_current_commit(git_blame *blame)
 	 * touch.
 	 */
 
-/* printf("TAKING SOME OWNERSHIP\n");*/
+printf("TAKING SOME OWNERSHIP\n");
 	error = take_definitive_blame(blame);
+
+	dump_state(blame);
 
 done:
 /*	printf("DONE ERROR IS: %d\n", error);*/
@@ -480,21 +546,20 @@ static int move_next_commit(git_blame *blame)
 {
 	git_oid commit_id;
 	git_commit *commit = NULL;
-	int error = -1;
+	int error;
 
 	git_commit_free(blame->current_commit);
 	blame->current_commit = NULL;
 
 	/* TODO: lookup the blob and ignore seen blobs? */
 
-	if (git_revwalk_next(&commit_id, blame->revwalk) < 0 ||
-	    git_commit_lookup(&commit, blame->repository, &commit_id) < 0 ||
-	    git_commit_dup(&blame->current_commit, commit) < 0)
+	if ((error = git_revwalk_next(&commit_id, blame->revwalk)) < 0 ||
+	    (error = git_commit_lookup(&commit, blame->repository, &commit_id)) < 0 ||
+	    (error = git_commit_dup(&blame->current_commit, commit)) < 0)
 		goto done;
 
-	error = 0;
-
 done:
+printf("MOVE NEXT: %d\n", error);
 	git_commit_free(commit);
 	return error;
 }
@@ -523,30 +588,29 @@ static int blame_file_from_buffer(
 		setup_blame_from_head(blame);
 
 	do {
-		if ((error = consider_current_commit(blame)) < 0) {
-			if (error == GIT_ITEROVER) {
-				printf("DONE!\n");
-				break;
-			}
-
-			goto on_error;
+		if ((error = consider_current_commit(blame)) < 0 ||
+		    (error = move_next_commit(blame)) < 0) {
+			break;
 		}
-
-		if (move_next_commit(blame) < 0)
-			goto on_error;
 	} while (git_blame_contributormap_size(&blame->contributors) > 0);
 
 /* printf("=========================================================\n"); */
 
-dump_state(blame);
+	printf("OK? %d\n", error);
 
-	if (error != GIT_ITEROVER)
+	if (error < 0)
 		goto on_error;
+
+dump_state(blame);
 
 	*out = blame;
 	return 0;
 
 on_error:
+printf("ERROR IS: %d\n", error);
+	if (error == GIT_ITEROVER)
+		error = 0;
+
 	git_blame_free(blame);
 	return error;
 }
