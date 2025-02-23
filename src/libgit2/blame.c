@@ -261,12 +261,13 @@ done:
 }
 
 // TODO: track filename per parent, since one parent could rename and another could *not*
-static int check_for_rename(git_blame *blame, git_tree *parent_tree, const char *parent_path)
+// TODO: this is too simplistic, right? or does a topo sort save us here? idk...
+static int check_for_rename(char **out, git_blame *blame, git_tree *parent_tree, const char *parent_path)
 {
 	git_tree *current_tree = NULL;
 	git_diff *diff = NULL;
 	git_diff_options diff_opts = GIT_DIFF_OPTIONS_INIT;
-	git_strarray pathspec = {0};
+	int (*pathcmp)(const char *a, const char *b);
 	size_t deltas, i;
 	int error;
 
@@ -276,20 +277,29 @@ printf("HELLO, CHECKING FOR RENAMES\n");
 
 	if ((error = git_commit_tree(&current_tree, blame->current_commit)) < 0 ||
 	    (error = git_diff_tree_to_tree(&diff, blame->repository, parent_tree, current_tree, &diff_opts)) < 0 ||
-	    (error = git_diff_find_similar(diff, &diff_opts)) < 0)
+	    (error = git_diff_find_similar(diff, NULL)) < 0)
 		goto done;
+
+	// TODO
+	//pathcmp = blame->ignorecase ? git__strcasecmp : git__strcmp;
+	pathcmp = git__strcmp;
 
 	deltas = git_diff_num_deltas(diff);
 
-	/* TODO: bsearch */
+	/* TODO: bsearch - but we'll need to resort the deltas on old path*/
 	for (i = 0; i < deltas; i++) {
 		const git_diff_delta *delta = git_diff_get_delta(diff, i);
 
+		if (delta->status == GIT_DELTA_RENAMED && pathcmp(delta->old_file.path, parent_path) == 0) {
+			*out = git__strdup(delta->new_file.path);
+			GIT_ERROR_CHECK_ALLOC(*out);
 
-		printf("%d - %s %s\n", delta->status, delta->old_file.path, delta->new_file.path);
+			error = 0;
+			goto done;
+		}
 	}
 
-abort();
+	error = GIT_ENOTFOUND;
 
 done:
 	git_tree_free(current_tree);
@@ -309,7 +319,7 @@ static int compare_to_parent(
 	git_blob *current_blob = NULL, *parent_blob = NULL;
 	git_diff_options diff_options = GIT_DIFF_OPTIONS_INIT;
 	struct diff_line_data diff_line_data;
-	const char *path = blame->path;
+	char *parent_path = blame->path;
 	int error = -1;
 
 	/* TODO: move options into blame so that we don't set them up over and over again */
@@ -324,13 +334,18 @@ static int compare_to_parent(
 		goto done;
 
 	/* TODO: handle renames */
-	if ((error = git_tree_entry_bypath(&parent_tree_entry, parent_tree, blame->path)) < 0) {
+	while (printf("LOOKING UP: %s\n", blame->path) &&
+	(error = git_tree_entry_bypath(&parent_tree_entry, parent_tree, parent_path)) < 0) {
 		/*
 		 * No parent entry means that either this file was renamed
 		 * or this commit introduced the file.
 		 */
 		if (error == GIT_ENOTFOUND)
-			error = check_for_rename(blame, parent_tree, blame->path);
+			error = check_for_rename(&parent_path, blame, parent_tree, parent_path);
+
+if(error == 0) {
+printf("HAS RENAME! new name: %s\n", parent_path);
+}
 
 		if (error < 0) {
 			if (error == GIT_ENOTFOUND)
@@ -340,10 +355,10 @@ static int compare_to_parent(
 		}
 	}
 
-	*parent_file_exists = true;
-
 	if ((error = git_blob_lookup(&parent_blob, blame->repository, &parent_tree_entry->oid)) < 0)
 		goto done;
+
+	*parent_file_exists = true;
 
 printf("parent has a blob: %p\n", git_blob_id(parent_blob));
 printf("parent has a blob: %s\n", git_oid_tostr_s(git_blob_id(parent_blob)));
@@ -368,11 +383,16 @@ printf("-- %s", git_oid_tostr_s(git_blob_id(current_blob))); printf(" %s\n", git
 		}
 	}
 
-	if ((error = git_diff_blob_to_buffer(parent_blob, path,
+	if ((error = git_diff_blob_to_buffer(parent_blob, parent_path,
 			blame->contents, blame->contents_len,
 			blame->path, &diff_options, NULL, NULL,
 			NULL, diff_line_cb, &diff_line_data)) < 0)
 		goto done;
+
+	if (parent_path != blame->path) {
+		git__free(blame->path);
+		blame->path = parent_path;
+	}
 
 	*is_unchanged = !diff_line_data.has_changes;
 	*has_reassigned = diff_line_data.reassigned;
@@ -449,7 +469,7 @@ static void dump_state(git_blame *blame)
 
 static int consider_current_commit(git_blame *blame)
 {
-	git_commit *this = NULL, *parent = NULL;
+	git_commit *parent = NULL;
 	size_t i, parent_count;
 	int error = -1;
 
@@ -465,7 +485,7 @@ static int consider_current_commit(git_blame *blame)
 	}
 	*/
 
-	printf("CONSIDERING CURRENT COMMIT : %s\n", git_oid_tostr_s(blame->current_commit));
+	printf("CONSIDERING CURRENT COMMIT : %s\n", git_oid_tostr_s(git_commit_id(blame->current_commit)));
 
 	/* TODO: honor first parent mode here? */
 	parent_count = git_commit_parentcount(blame->current_commit);
