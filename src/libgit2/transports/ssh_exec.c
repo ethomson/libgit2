@@ -128,7 +128,7 @@ static int get_ssh_cmdline(
 	git_remote *remote = ((transport_smart *)transport->owner)->owner;
 	git_repository *repo = remote->repo;
 	git_config *cfg;
-	git_str ssh_cmd = GIT_STR_INIT;
+	git_str path = GIT_STR_INIT, ssh_cmd = GIT_STR_INIT;
 	const char *default_ssh_cmd = "ssh";
 	int error;
 
@@ -158,6 +158,9 @@ static int get_ssh_cmdline(
 	else if ((error = git_config__get_string_buf(&ssh_cmd, cfg, "core.sshcommand")) < 0 && error != GIT_ENOTFOUND)
 		goto done;
 
+	if ((error = git_str_puts_escaped(&path, url->path, "'!", "'\\", "'")) < 0)
+		goto done;
+
 	error = git_str_printf(out, "%s %s %s \"%s%s%s\" \"%s '%s'\"",
 		ssh_cmd.size > 0 ? ssh_cmd.ptr : default_ssh_cmd,
 		url->port_specified ? "-p" : "",
@@ -166,9 +169,10 @@ static int get_ssh_cmdline(
 		url->username ? "@" : "",
 		url->host,
 		command,
-		url->path);
+		path.ptr);
 
 done:
+	git_str_dispose(&path);
 	git_str_dispose(&ssh_cmd);
 	git_config_free(cfg);
 	return error;
