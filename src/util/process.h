@@ -84,6 +84,10 @@ extern int git_process_new(
  * are not thread safe, so you may not modify the environment during
  * this call.  You can avoid this by setting `exclude_env` in the
  * options and providing the entire environment yourself.
+ *
+ * This function passes the `cmdline` to a shell and DOES NOT perform
+ * any safe escaping on the `cmdline` and SHOULD NOT be used on user
+ * input. Instead, use `git_process_new`.
  */
 extern int git_process_new_from_cmdline(
 	git_process **out,
